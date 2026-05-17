@@ -48,11 +48,6 @@ server/.playwright-mcp/
 *.doc
 *.docx
 *.txt
-# 开发文档
+docs/
+NEXUS-核心架构解读-面试版.md
 client/frontend-dev-doc.md
-server/backend-dev-doc.md
-
-# 测试文档
-docs/test-plan.md
-docs/test-cases.md
-docs/bug-reports.md

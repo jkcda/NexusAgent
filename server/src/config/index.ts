@@ -14,6 +14,8 @@ const SETTING_KEYS = [
   'EMAIL_PASS',
   'JWT_SECRET',
   'CLIENT_URL',
+  // 视频处理
+  'VIDEO_FPS',
 ] as const
 
 type SettingKey = (typeof SETTING_KEYS)[number]
@@ -28,6 +30,7 @@ const ENV_MAP: Record<SettingKey, string | undefined> = {
   EMAIL_PASS: process.env.EMAIL_PASS,
   JWT_SECRET: process.env.JWT_SECRET,
   CLIENT_URL: process.env.CLIENT_URL,
+  VIDEO_FPS: process.env.VIDEO_FPS,
 }
 
 export async function initDynamicConfig(): Promise<void> {
@@ -75,6 +78,7 @@ export function getMaskedSettings(): { key_name: string; description: string; ma
     EMAIL_PASS: 'QQ邮箱 SMTP 授权码',
     JWT_SECRET: 'JWT 签名密钥（用于签发和验证登录凭证）',
     CLIENT_URL: '前端访问地址（用于邮件验证链接，如 https://你的域名.com）',
+    VIDEO_FPS: '视频帧提取频率（每秒提取的帧数，越大越密集，默认 2）',
   }
   return SETTING_KEYS
     .filter(k => !k.startsWith('CAPABILITY_')) // 能力配置在能力管理页面管理
@@ -206,8 +210,10 @@ const config = {
   },
 
   video: {
-    maxDuration: 1800,
-    fps: 2,
+    maxDuration: Number(process.env.VIDEO_MAX_DURATION) || 1800,
+    get fps() {
+      return Number(getSetting('VIDEO_FPS')) || 2
+    },
   },
 
   audio: {
