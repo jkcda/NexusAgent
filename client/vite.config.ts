@@ -30,7 +30,15 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
-        rewrite: (path) => path
+        rewrite: (path) => path,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            if (req.url?.startsWith('/api/ai/chat')) {
+              proxyReq.setHeader('Accept', 'text/event-stream')
+              proxyReq.setHeader('Cache-Control', 'no-cache')
+            }
+          })
+        }
       },
       '/uploads': {
         target: 'http://localhost:3000',

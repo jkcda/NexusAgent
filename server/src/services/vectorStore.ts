@@ -9,7 +9,7 @@ import type { Connection, Table } from '@lancedb/lancedb'
 
 let _connection: Connection | null = null
 
-async function getConnection(): Promise<Connection> {
+export async function getLanceConnection(): Promise<Connection> {
   if (!_connection) {
     const dataDir = path.resolve(config.lancedb.dataDir)
     if (!fs.existsSync(dataDir)) {
@@ -22,7 +22,7 @@ async function getConnection(): Promise<Connection> {
 
 export async function getVectorStore(tableName: string): Promise<LanceDB> {
   const embeddings = getEmbeddings()
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const tableNames = await conn.tableNames()
 
   if (tableNames.includes(tableName)) {
@@ -44,6 +44,43 @@ export async function createVectorStore(tableName: string): Promise<LanceDB> {
   return getVectorStore(tableName)
 }
 
+/**
+ * 通用建表/打开表（供 memoryService 等非KB场景使用）
+ * 返回原生 LanceDB Table，不含 LangChain 包装
+ */
+export async function getOrCreateTable(tableName: string, dimension?: number): Promise<Table> {
+  const dim = dimension || config.embeddings.dimension || 768
+  const conn = await getLanceConnection()
+  const tableNames = await conn.tableNames()
+
+  if (tableNames.includes(tableName)) {
+    return conn.openTable(tableName)
+  }
+
+  const table = await conn.createTable(tableName, [
+    { vector: Array(dim).fill(0), text: '', session_id: '', created_at: '' }
+  ])
+  await table.delete("session_id = ''")
+  return table
+}
+
+/**
+ * 原生向量搜索（不依赖 LangChain 包装）
+ * 接收已嵌入的查询向量，返回原始结果数组
+ */
+export async function searchInTable(
+  tableName: string,
+  queryVector: number[],
+  limit: number = 10
+): Promise<any[]> {
+  const conn = await getLanceConnection()
+  const tableNames = await conn.tableNames()
+  if (!tableNames.includes(tableName)) return []
+
+  const table = await conn.openTable(tableName)
+  return table.search(queryVector).limit(limit).toArray()
+}
+
 export async function addDocuments(
   tableName: string,
   docs: Document[]
@@ -57,12 +94,31 @@ export async function similaritySearch(
   query: string,
   k: number = config.rag.topK
 ): Promise<[Document, number][]> {
-  const store = await getVectorStore(tableName)
-  return store.similaritySearchWithScore(query, k)
+  // 绕过 LangChain 的 broken similaritySearchWithScore（LanceDB 0.27 返回 _distance 而非 score）
+  const embeddings = getEmbeddings()
+  const conn = await getLanceConnection()
+  const tableNames = await conn.tableNames()
+  if (!tableNames.includes(tableName)) return []
+
+  const queryVector = await embeddings.embedQuery(query)
+  const table = await conn.openTable(tableName)
+  const raw = await table.search(queryVector).limit(k).toArray()
+
+  return raw.map((item: any) => {
+    const metadata: Record<string, any> = {}
+    for (const key of Object.keys(item)) {
+      if (key !== 'vector' && key !== '_distance') {
+        metadata[key] = item[key]
+      }
+    }
+    const distance = item._distance ?? 1
+    const score = 1 - Math.min(distance, 1)
+    return [new Document({ pageContent: item.text || '', metadata }), score]
+  })
 }
 
 export async function deleteVectorStore(tableName: string): Promise<void> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const tableNames = await conn.tableNames()
   if (tableNames.includes(tableName)) {
     await conn.dropTable(tableName)
@@ -76,7 +132,7 @@ export async function getAdjacentChunks(
   before: number,
   after: number
 ): Promise<{ text: string; chunkIndex: number }[]> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const tableNames = await conn.tableNames()
   if (!tableNames.includes(tableName)) return []
 
@@ -98,7 +154,7 @@ export async function deleteDocumentsByDocId(
   tableName: string,
   docId: number
 ): Promise<void> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const tableNames = await conn.tableNames()
   if (!tableNames.includes(tableName)) return
 

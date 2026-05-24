@@ -103,7 +103,6 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 
 // 后台预加载语音识别模型（避免首次请求阻塞/OOM崩溃）
 import('./services/videoProcessor.js').then(m => {
-  console.log('[Preload] 后台预加载语音识别模型...')
   m.preloadTranscriber()
 }).catch(() => {})
 
@@ -114,7 +113,6 @@ import('./services/embedding.js').then(m => {
 
 // 初始化 MCP 连接（Playwright 浏览器）
 import('./services/mcp.js').then(m => {
-  console.log('[MCP] Connecting to MCP servers...')
   m.initMCP()
 }).catch(() => {})
 

@@ -508,7 +508,7 @@ export async function retrieveFromFileChunks(
   return { chunks, promptAddition: formatChunksForPrompt(chunks) }
 }
 
-function formatChunksForPrompt(chunks: RetrievedChunk[]): string {
+export function formatChunksForPrompt(chunks: RetrievedChunk[]): string {
   if (chunks.length === 0) return ''
 
   return '\n\n--- 以下是与当前问题相关的参考资料 ---\n' +

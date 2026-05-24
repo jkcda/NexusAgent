@@ -48,7 +48,9 @@ router.post('/chat', async (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
     res.setHeader('Access-Control-Allow-Origin', '*')
+    res.flushHeaders()
 
     try {
       // 查询用户角色（管理员可用 admin_* 工具）

@@ -10,7 +10,7 @@ const pdfParse: (buf: Buffer) => Promise<{ text: string }> = require('pdf-parse'
 
 // 解析文档为纯文本（从 ai.ts 提取）
 export async function parseDocument(filePath: string, mimeType: string): Promise<string> {
-  const absolutePath = path.join(process.cwd(), filePath)
+  const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
 
   switch (mimeType) {
     case 'text/plain':
@@ -32,7 +32,8 @@ export async function parseDocument(filePath: string, mimeType: string): Promise
         const mammoth = (await import('mammoth')).default
         const result = await mammoth.extractRawText({ path: absolutePath })
         return result.value
-      } catch {
+      } catch (e: any) {
+        console.error(`[DOCX] 解析失败: ${absolutePath} — ${e.message || e}`)
         return '[DOCX 解析失败]'
       }
 

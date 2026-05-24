@@ -122,6 +122,9 @@ export async function searchInKB(kbId: number, query: string, topK?: number): Pr
   if (!kb) throw new Error('知识库不存在')
 
   const results = await similaritySearch(kb.lancedb_table_name, query, topK)
+  if (results.length > 0) {
+    console.log(`[searchInKB] 返回 ${results.length} 条，最高分=${results[0][1]?.toFixed(3) || 'N/A'}`)
+  }
   return results.map(([doc, score]) => ({
     content: doc.pageContent,
     source: (doc.metadata.filename as string) || (doc.metadata.source as string) || 'unknown',

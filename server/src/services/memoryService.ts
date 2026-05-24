@@ -1,40 +1,14 @@
-import { connect } from '@lancedb/lancedb'
 import { embedQuery, embedDocuments } from './embedding.js'
+import { getLanceConnection, getOrCreateTable, searchInTable } from './vectorStore.js'
 import config, { getSetting } from '../config/index.js'
-import path from 'path'
-import fs from 'fs'
-import type { Connection, Table } from '@lancedb/lancedb'
 import { providerManager } from '../providers/index.js'
-
-let _connection: Connection | null = null
-
-async function getConnection(): Promise<Connection> {
-  if (!_connection) {
-    const dataDir = path.resolve(config.lancedb.dataDir)
-    if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true })
-    }
-    _connection = await connect(dataDir)
-  }
-  return _connection
-}
 
 function tableName(userId: number): string {
   return `kb_memory_${userId}`
 }
 
-async function ensureTable(userId: number): Promise<Table> {
-  const conn = await getConnection()
-  const name = tableName(userId)
-  const names = await conn.tableNames()
-  if (names.includes(name)) {
-    return conn.openTable(name)
-  }
-  const table = await conn.createTable(name, [
-    { vector: new Array(1024).fill(0), text: '', session_id: '', created_at: '' }
-  ])
-  await table.delete('session_id = \'\'')
-  return table
+async function ensureTable(userId: number) {
+  return getOrCreateTable(tableName(userId), config.embeddings.dimension)
 }
 
 // ── Q&A 成对暂存 ──
@@ -84,7 +58,7 @@ export async function commitMemoryPair(
 
 // ── 中期优化1: 会话摘要 ──
 async function generateSummary(userId: number, sessionId: string, roundCount: number): Promise<void> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const names = await conn.tableNames()
   if (!names.includes(tableName(userId))) return
 
@@ -114,7 +88,7 @@ export async function recallMemory(
   query: string,
   topK: number = 5
 ): Promise<string> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const names = await conn.tableNames()
   if (!names.includes(tableName(userId))) return ''
 
@@ -163,7 +137,7 @@ export async function recallMemory(
 
 /** 删除指定会话的所有记忆 */
 export async function forgetSession(userId: number, sessionId: string): Promise<void> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const names = await conn.tableNames()
   if (!names.includes(tableName(userId))) return
   const table = await conn.openTable(tableName(userId))
@@ -175,7 +149,7 @@ export async function forgetSession(userId: number, sessionId: string): Promise<
 
 /** 删除用户全部记忆（清空记忆库） */
 export async function forgetAllMemories(userId: number): Promise<void> {
-  const conn = await getConnection()
+  const conn = await getLanceConnection()
   const names = await conn.tableNames()
   const name = tableName(userId)
   if (!names.includes(name)) return
@@ -194,7 +168,7 @@ function decayFactor(createdAt: string): number {
 
 async function isDuplicate(userId: number, newText: string): Promise<boolean> {
   try {
-    const conn = await getConnection()
+    const conn = await getLanceConnection()
     const names = await conn.tableNames()
     if (!names.includes(tableName(userId))) return false
     const qVector = await embedQuery(newText)

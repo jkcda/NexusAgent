@@ -3,7 +3,7 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import config, { getSetting } from '../config/index.js'
 import { searchWeb, type WebSearchResult } from './webSearch.js'
-import { retrieveFromKB } from './ragChain.js'
+import { retrieveFromKB, formatChunksForPrompt } from './ragChain.js'
 import { recallMemory, forgetAllMemories } from './memoryService.js'
 import { getMcpTools } from './mcp.js'
 import { fsTools } from './fileSystem.js'
@@ -44,7 +44,7 @@ function createTools(opts: { userId?: number | null; kbId?: number | null; permi
         return JSON.stringify({ chunks: result.chunks.map(c => ({ content: c.content, source: c.source, score: c.score })), _note: '请在回复中标注 [📚知识库]' })
       }, {
         name: 'query_knowledge_base',
-        description: '从用户的知识库中检索相关文档。返回文档片段和来源文件名。使用时需在回复中标注 [📚知识库]。',
+        description: '从用户的知识库中检索相关文档。当用户提出知识性问题、询问文档内容、需要查找资料、或引用任何文件时，必须先调用此工具检索知识库。返回文档片段和来源文件名。使用时必须在回复中标注 [📚知识库] 和来源文件名。',
         schema: z.object({
           query: z.string().describe('检索查询，使用文档中的关键词'),
         }),
@@ -398,7 +398,7 @@ export async function createChatAgent(cfg: AgentConfig) {
 - playwright__browser_take_screenshot — 网页截图。关键词："截图"
 - generate_image — 生成图片。关键词："画/生成/配图/海报"
 - recall_memory — 回忆历史对话。关键词："上次/之前/记得"
-- query_knowledge_base — 检索知识库文档
+- query_knowledge_base — 检索你的知识库文档。**最高优先级：当知识库已连接时，回答任何问题前必须先调用此工具检索知识库。即使你认为自己知道答案，也必须先检索知识库获取权威信息。** 检索后必须在回复中标注 [📚知识库] 和来源文件名。
 
 ## 信息准确性铁律（最高优先级，违反将导致情报事故）
 - 你的训练数据有截止日期，许多信息已经过时或错误，**严禁凭训练数据回答事实性问题**
@@ -546,6 +546,23 @@ export async function* agentStream(
     return yield* rolePlayStream(cfg, messages, userInput)
   }
 
+  // 预检索知识库：在发送给 LLM 前自动注入 KB 上下文（兜底机制）
+  // 即使 LLM 不主动调用 query_knowledge_base 工具，KB 内容也已注入
+  let effectiveInput = userInput
+  if (cfg.kbId) {
+    try {
+      const ragCtx = await retrieveFromKB(userInput, cfg.kbId)
+      if (ragCtx.chunks.length > 0) {
+        effectiveInput = ragCtx.promptAddition + '\n用户问题: ' + userInput
+        console.log(`[Agent] 预检索知识库: ${ragCtx.chunks.length} 个相关块已注入上下文`)
+      } else {
+        console.log(`[Agent] 预检索知识库: 未找到相关内容`)
+      }
+    } catch (err: any) {
+      console.warn(`[Agent] 预检索知识库失败: ${err.message}`)
+    }
+  }
+
   // 默认奈克瑟模式 — LangChain Agent，含全部工具
   const agent = await createChatAgent(cfg)
 
@@ -555,7 +572,7 @@ export async function* agentStream(
         ? { role: 'user' as const, content: m.content }
         : { role: 'assistant' as const, content: m.content }
     ),
-    { role: 'user' as const, content: userInput },
+    { role: 'user' as const, content: effectiveInput },
   ]
 
   try {
