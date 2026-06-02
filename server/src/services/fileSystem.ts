@@ -51,7 +51,7 @@ function buildDiff(oldText: string, newText: string): string {
 }
 
 // ── fs_read 文件读取缓存 ──
-const readCache = new Map<string, { content: string; mtime: number }>()
+const readCache = new Map<string, string>()
 const READ_CACHE_MAX = 200
 
 function cacheKey(absPath: string, mtime: number): string {
@@ -59,12 +59,11 @@ function cacheKey(absPath: string, mtime: number): string {
 }
 
 function getCached(absPath: string, mtime: number): string | undefined {
-  return readCache.get(cacheKey(absPath, mtime))?.content
+  return readCache.get(cacheKey(absPath, mtime))
 }
 
 function setCached(absPath: string, mtime: number, content: string): void {
   if (readCache.size >= READ_CACHE_MAX) {
-    // 淘汰前 50 个最老的条目
     const keys = [...readCache.keys()]
     for (let i = 0; i < 50 && i < keys.length; i++) readCache.delete(keys[i])
   }

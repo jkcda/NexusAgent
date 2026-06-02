@@ -105,7 +105,7 @@ export async function searchInTable(
   if (!tableNames.includes(tableName)) return []
 
   const table = await conn.openTable(tableName)
-  return table.search(queryVector).limit(limit).nprobes(10).refineFactor(2).toArray()
+  return table.search(queryVector).limit(limit).refineFactor(2).toArray()
 }
 
 export async function addDocuments(
@@ -130,7 +130,7 @@ export async function similaritySearch(
   const queryNorm = Math.sqrt(queryVector.reduce((s, x) => s + x * x, 0))
 
   const table = await conn.openTable(tableName)
-  const raw = await table.search(queryVector).limit(k).nprobes(10).refineFactor(2).toArray()
+  const raw = await table.search(queryVector).limit(k).refineFactor(2).toArray()
 
   return raw.map((item: any) => {
     const metadata: Record<string, any> = {}
