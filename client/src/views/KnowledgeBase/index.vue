@@ -85,7 +85,7 @@ const loadKBList = async () => {
     if (res.data.success) {
       kbList.value = res.data.result.knowledgeBases || []
       if (kbList.value.length > 0 && !selectedKbId.value) {
-        selectKB(kbList.value[0])
+        selectKB(kbList.value[0]!)
       }
     }
   } catch {

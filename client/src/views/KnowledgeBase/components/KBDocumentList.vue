@@ -270,11 +270,11 @@ const startUpload = async () => {
     try {
       await uploadDocumentsToKB(props.kbId, batch)
       for (let j = i; j < i + batch.length && j < uploadFiles.value.length; j++) {
-        uploadFiles.value[j].done = true
+        uploadFiles.value[j]!.done = true
       }
     } catch (err: any) {
       for (let j = i; j < i + batch.length && j < uploadFiles.value.length; j++) {
-        uploadFiles.value[j].error = true
+        uploadFiles.value[j]!.error = true
       }
       ElMessage.error(err.message || `第 ${Math.floor(i / batchSize) + 1} 批上传失败`)
     }
@@ -325,7 +325,7 @@ const onVersionFileSelected = async () => {
   if (!target) return
 
   try {
-    await uploadDocumentsToKB(props.kbId, [file])
+    await uploadDocumentsToKB(props.kbId, [file!])
     ElMessage.success('新版本已上传')
     await loadDocuments()
     emit('uploaded')
@@ -419,8 +419,8 @@ const openVersionDrawer = async (doc: KbDocument) => {
   versionLoading.value = true
   try {
     const res = await getDocumentVersions(props.kbId, doc.id)
-    if (res.data.success) {
-      versionList.value = res.data.result.versions || []
+    if ((res as any).data.success) {
+      versionList.value = (res as any).data.result.versions || []
     }
   } catch {
     ElMessage.error('获取版本列表失败')
@@ -500,8 +500,8 @@ const deleteVersion = async (v: KbDocumentVersion) => {
     versionLoading.value = true
     try {
       const res = await getDocumentVersions(props.kbId, versionDocIdForPreview.value)
-      if (res.data.success) {
-        versionList.value = res.data.result.versions || []
+      if ((res as any).data.success) {
+        versionList.value = (res as any).data.result.versions || []
       }
     } catch { /* keep existing list */ }
     finally { versionLoading.value = false }
