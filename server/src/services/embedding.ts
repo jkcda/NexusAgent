@@ -1,4 +1,4 @@
-import config from '../config/index.js'
+import config, { getSetting } from '../config/index.js'
 import { cacheGet, cacheSet, hashKey } from './cache.js'
 import os from 'os'
 
@@ -10,13 +10,14 @@ let _useApiFallback = false
 
 /** 检查服务器资源是否足够跑本地模型 */
 function hasEnoughMemory(): boolean {
-  // 检查是否强制使用 API（管理员在向量化配置中设置的）
   try {
-    const { providerManager } = require('../providers/index.js')
-    const embCfg = providerManager.getEmbeddingConfig()
-    if (embCfg.forceAPI) {
-      console.log('[Embedding] 向量化配置为 forceAPI，跳过本地模型')
-      return false
+    const raw = getSetting('CAPABILITY_EMBEDDING')
+    if (raw) {
+      const cfg = JSON.parse(raw)
+      if (cfg.forceAPI) {
+        console.log('[Embedding] forceAPI=true，跳过本地模型')
+        return false
+      }
     }
   } catch {}
 
@@ -24,7 +25,7 @@ function hasEnoughMemory(): boolean {
   const cpuCount = os.cpus().length
   const minFreeMem = cpuCount <= 2 ? 800 : 500
   if (freeMem < minFreeMem) {
-    console.warn(`[Embedding] 服务器资源不足（CPU:${cpuCount}核, 空闲内存:${freeMem}MB < ${minFreeMem}MB），降级为 API 向量化`)
+    console.warn(`[Embedding] 资源不足（CPU:${cpuCount}核, 空闲:${freeMem}MB），降级 API`)
     return false
   }
   return true

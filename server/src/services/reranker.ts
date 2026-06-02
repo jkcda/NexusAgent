@@ -5,6 +5,7 @@
  * 由调用方（ragChain）回退到 LLM 重排序。
  */
 import os from 'os'
+import { getSetting } from '../config/index.js'
 
 let _reranker: any = null
 let _rerankerLoading = false
@@ -13,13 +14,14 @@ let _disabled = false
 const MODEL = 'Xenova/bge-reranker-base'
 
 function hasEnoughMemory(): boolean {
-  // 检查是否强制使用 API 重排序
   try {
-    const { providerManager } = require('../providers/index.js')
-    const rerankCfg = providerManager.getRerankConfig()
-    if (rerankCfg.forceAPI) {
-      console.log('[Reranker] 重排序配置为 forceAPI，跳过本地模型')
-      return false
+    const raw = getSetting('CAPABILITY_RERANK')
+    if (raw) {
+      const cfg = JSON.parse(raw)
+      if (cfg.forceAPI) {
+        console.log('[Reranker] forceAPI=true，跳过本地模型')
+        return false
+      }
     }
   } catch {}
 
