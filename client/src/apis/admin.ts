@@ -84,6 +84,28 @@ export const updateLLMConfig = (data: {
   return request.put('/admin/capabilities/llm', data)
 }
 
+// 更新向量化能力配置
+export const updateEmbeddingConfig = (data: {
+  name?: string
+  apiKey?: string
+  baseURL?: string
+  model?: string
+  forceAPI?: boolean
+}) => {
+  return request.put('/admin/capabilities/embedding', data)
+}
+
+// 更新重排序能力配置
+export const updateRerankConfig = (data: {
+  name?: string
+  apiKey?: string
+  baseURL?: string
+  model?: string
+  forceAPI?: boolean
+}) => {
+  return request.put('/admin/capabilities/rerank', data)
+}
+
 // 更新图片生成能力配置
 export const updateImageConfig = (data: {
   name?: string

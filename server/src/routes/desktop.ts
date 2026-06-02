@@ -93,4 +93,38 @@ router.put('/settings', async (req: Request, res: Response) => {
   }
 })
 
+// PUT /api/desktop/settings/embedding - 更新向量化配置
+router.put('/settings/embedding', async (req: Request, res: Response) => {
+  try {
+    const { name, model, baseURL, apiKey, forceAPI } = req.body
+    await providerManager.saveEmbeddingConfig({
+      ...(name !== undefined ? { name } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(baseURL !== undefined ? { baseURL } : {}),
+      ...(apiKey !== undefined && apiKey && !apiKey.includes('***') ? { apiKey } : {}),
+      ...(forceAPI !== undefined ? { forceAPI } : {}),
+    })
+    ApiResponse.success(res, null, '向量化配置已更新')
+  } catch (err: any) {
+    ApiResponse.internalServerError(res, '更新配置失败', err.message)
+  }
+})
+
+// PUT /api/desktop/settings/rerank - 更新重排序配置
+router.put('/settings/rerank', async (req: Request, res: Response) => {
+  try {
+    const { name, model, baseURL, apiKey, forceAPI } = req.body
+    await providerManager.saveRerankConfig({
+      ...(name !== undefined ? { name } : {}),
+      ...(model !== undefined ? { model } : {}),
+      ...(baseURL !== undefined ? { baseURL } : {}),
+      ...(apiKey !== undefined && apiKey && !apiKey.includes('***') ? { apiKey } : {}),
+      ...(forceAPI !== undefined ? { forceAPI } : {}),
+    })
+    ApiResponse.success(res, null, '重排序配置已更新')
+  } catch (err: any) {
+    ApiResponse.internalServerError(res, '更新配置失败', err.message)
+  }
+})
+
 export default router

@@ -25,10 +25,6 @@
             <code class="value">{{ llm.model || '未配置' }}</code>
           </div>
           <div class="info-row">
-            <span class="label">Embedding 模型</span>
-            <code class="value">{{ llm.embeddingModel || '未配置' }}</code>
-          </div>
-          <div class="info-row">
             <span class="label">API Key</span>
             <code class="value" :class="{ 'not-configured': !llm.apiKey }">{{ llm.apiKey ? maskKey(llm.apiKey) : '未配置' }}</code>
           </div>
@@ -39,6 +35,64 @@
           <div class="info-row">
             <span class="label">请求模板</span>
             <code class="value" :class="{ 'not-configured': !llm.requestTemplate }">{{ llm.requestTemplate ? '已配置' : '未配置（使用默认参数）' }}</code>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- ====== 向量化 ====== -->
+      <el-card class="cap-card" shadow="hover">
+        <template #header>
+          <div class="cap-header">
+            <div class="cap-title">
+              <span class="cap-icon">📐</span>
+              <span>向量化 (Embedding)</span>
+              <el-tag v-if="embedding.name" size="small" effect="plain">{{ embedding.name }}</el-tag>
+              <el-tag size="small" :type="embedding.forceAPI ? 'danger' : 'info'" effect="plain">{{ embedding.forceAPI ? '强制 API' : '本地优先' }}</el-tag>
+            </div>
+            <el-button type="primary" plain size="small" @click="openEmbeddingEdit">编辑配置</el-button>
+          </div>
+        </template>
+        <div class="cap-body">
+          <div class="info-row">
+            <span class="label">模型</span>
+            <code class="value">{{ embedding.model || '未配置' }}</code>
+          </div>
+          <div class="info-row">
+            <span class="label">API Key</span>
+            <code class="value" :class="{ 'not-configured': !embedding.apiKey }">{{ embedding.apiKey ? maskKey(embedding.apiKey) : '未配置' }}</code>
+          </div>
+          <div class="info-row">
+            <span class="label">Base URL</span>
+            <code class="value">{{ embedding.baseURL || '未配置' }}</code>
+          </div>
+        </div>
+      </el-card>
+
+      <!-- ====== 重排序 ====== -->
+      <el-card class="cap-card" shadow="hover">
+        <template #header>
+          <div class="cap-header">
+            <div class="cap-title">
+              <span class="cap-icon">🔄</span>
+              <span>重排序 (Rerank)</span>
+              <el-tag v-if="rerank.name" size="small" effect="plain">{{ rerank.name }}</el-tag>
+              <el-tag size="small" :type="rerank.forceAPI ? 'danger' : 'info'" effect="plain">{{ rerank.forceAPI ? '强制 API' : '本地优先' }}</el-tag>
+            </div>
+            <el-button type="primary" plain size="small" @click="openRerankEdit">编辑配置</el-button>
+          </div>
+        </template>
+        <div class="cap-body">
+          <div class="info-row">
+            <span class="label">模型</span>
+            <code class="value">{{ rerank.model || '未配置' }}</code>
+          </div>
+          <div class="info-row">
+            <span class="label">API Key</span>
+            <code class="value" :class="{ 'not-configured': !rerank.apiKey }">{{ rerank.apiKey ? maskKey(rerank.apiKey) : '未配置' }}</code>
+          </div>
+          <div class="info-row">
+            <span class="label">Base URL</span>
+            <code class="value">{{ rerank.baseURL || '未配置' }}</code>
           </div>
         </div>
       </el-card>
@@ -110,11 +164,6 @@
           <div class="form-tip">填供应商支持的模型 ID。</div>
         </el-form-item>
 
-        <el-form-item label="Embedding 向量化模型">
-          <el-input v-model="llmForm.embeddingModel" placeholder="例如: BAAI/bge-small-zh-v1.5" clearable />
-          <div class="form-tip">向量化 API 降级时使用的模型名。服务器资源不足时自动切至此模型。</div>
-        </el-form-item>
-
         <el-form-item label="请求模板（可选）">
           <el-input v-model="llmForm.requestTemplate" type="textarea" :rows="8"
             placeholder='{
@@ -173,13 +222,67 @@
         <el-button type="primary" :loading="savingImg" @click="saveImage">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- ====== Embedding 编辑对话框 ====== -->
+    <el-dialog v-model="embeddingDialogVisible" title="向量化 (Embedding) 配置" width="680px" top="5vh" @closed="closeEmbeddingEdit">
+      <el-form label-position="top">
+        <el-form-item label="供应商名称">
+          <el-input v-model="embeddingForm.name" placeholder="例如: 魔搭社区" clearable />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <el-input v-model="embeddingForm.apiKey" type="password" show-password placeholder="sk-..." clearable />
+          <div class="form-tip">向量化 API 与对话 LLM 可以使用不同的 API Key，切换 LLM 不影响向量检索。</div>
+        </el-form-item>
+        <el-form-item label="API Base URL">
+          <el-input v-model="embeddingForm.baseURL" placeholder="例如: https://api-inference.modelscope.cn" clearable />
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-input v-model="embeddingForm.model" placeholder="例如: BAAI/bge-small-zh-v1.5" clearable />
+        </el-form-item>
+        <el-form-item label="强制使用 API">
+          <el-switch v-model="embeddingForm.forceAPI" />
+          <div class="form-tip">低配服务器（2核4G）建议开启，避免加载本地模型导致 OOM。关闭则本地模型优先，失败时自动降级 API。</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="embeddingDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingEmbedding" @click="saveEmbedding">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ====== Rerank 编辑对话框 ====== -->
+    <el-dialog v-model="rerankDialogVisible" title="重排序 (Rerank) 配置" width="680px" top="5vh" @closed="closeRerankEdit">
+      <el-form label-position="top">
+        <el-form-item label="供应商名称">
+          <el-input v-model="rerankForm.name" placeholder="例如: 魔搭社区" clearable />
+        </el-form-item>
+        <el-form-item label="API Key">
+          <el-input v-model="rerankForm.apiKey" type="password" show-password placeholder="sk-..." clearable />
+          <div class="form-tip">重排序 API Key。留空则使用本地模型（需要较多内存）。</div>
+        </el-form-item>
+        <el-form-item label="API Base URL">
+          <el-input v-model="rerankForm.baseURL" placeholder="例如: https://api-inference.modelscope.cn" clearable />
+        </el-form-item>
+        <el-form-item label="模型">
+          <el-input v-model="rerankForm.model" placeholder="例如: BAAI/bge-reranker-v2-m3" clearable />
+        </el-form-item>
+        <el-form-item label="强制使用 API">
+          <el-switch v-model="rerankForm.forceAPI" />
+          <div class="form-tip">低配服务器建议开启，跳过本地 reranker 模型加载。关闭则本地 cross-encoder 优先。</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rerankDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingRerank" @click="saveRerank">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getCapabilities, updateLLMConfig, updateImageConfig } from '@/apis/admin'
+import { getCapabilities, updateLLMConfig, updateEmbeddingConfig, updateRerankConfig, updateImageConfig } from '@/apis/admin'
 import request from '@/utils/http'
 
 const loading = ref(false)
@@ -190,8 +293,23 @@ interface LLMData {
   format: string
   baseURL: string
   model: string
-  embeddingModel: string
   requestTemplate: string
+}
+
+interface EmbeddingData {
+  name: string
+  apiKey: string
+  baseURL: string
+  model: string
+  forceAPI: boolean
+}
+
+interface RerankData {
+  name: string
+  apiKey: string
+  baseURL: string
+  model: string
+  forceAPI: boolean
 }
 
 interface ImageData {
@@ -203,10 +321,14 @@ interface ImageData {
   defaultSize: string
 }
 
-const emptyLLM = (): LLMData => ({ name: '', apiKey: '', format: 'openai', baseURL: '', model: '', embeddingModel: '', requestTemplate: '' })
+const emptyLLM = (): LLMData => ({ name: '', apiKey: '', format: 'openai', baseURL: '', model: '', requestTemplate: '' })
+const emptyEmbedding = (): EmbeddingData => ({ name: '', apiKey: '', baseURL: '', model: '', forceAPI: false })
+const emptyRerank = (): RerankData => ({ name: '', apiKey: '', baseURL: '', model: '', forceAPI: false })
 const emptyImage = (): ImageData => ({ name: '', apiKey: '', baseURL: '', model: '', requestTemplate: '', defaultSize: '' })
 
 const llm = ref<LLMData>(emptyLLM())
+const embedding = ref<EmbeddingData>(emptyEmbedding())
+const rerank = ref<RerankData>(emptyRerank())
 const img = ref<ImageData>(emptyImage())
 const imageRatios = ref<{ label: string; value: string }[]>([])
 
@@ -231,6 +353,8 @@ async function fetchCapabilities() {
     const res: any = await getCapabilities()
     const caps = res?.data?.result?.capabilities || {}
     llm.value = { ...emptyLLM(), ...caps.llm }
+    embedding.value = { ...emptyEmbedding(), ...caps.embedding }
+    rerank.value = { ...emptyRerank(), ...caps.rerank }
     img.value = { ...emptyImage(), ...caps.img }
   } catch {
     ElMessage.error('获取能力配置失败')
@@ -291,6 +415,54 @@ async function saveImage() {
     ElMessage.error('保存失败')
   } finally {
     savingImg.value = false
+  }
+}
+
+// ── Embedding ──
+const embeddingDialogVisible = ref(false)
+const embeddingForm = ref<EmbeddingData>(emptyEmbedding())
+const savingEmbedding = ref(false)
+
+function openEmbeddingEdit() {
+  embeddingForm.value = { ...embedding.value }
+  embeddingDialogVisible.value = true
+}
+function closeEmbeddingEdit() { embeddingForm.value = emptyEmbedding() }
+async function saveEmbedding() {
+  savingEmbedding.value = true
+  try {
+    await updateEmbeddingConfig(embeddingForm.value)
+    ElMessage.success('向量化配置已更新')
+    embeddingDialogVisible.value = false
+    await fetchCapabilities()
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    savingEmbedding.value = false
+  }
+}
+
+// ── Rerank ──
+const rerankDialogVisible = ref(false)
+const rerankForm = ref<RerankData>(emptyRerank())
+const savingRerank = ref(false)
+
+function openRerankEdit() {
+  rerankForm.value = { ...rerank.value }
+  rerankDialogVisible.value = true
+}
+function closeRerankEdit() { rerankForm.value = emptyRerank() }
+async function saveRerank() {
+  savingRerank.value = true
+  try {
+    await updateRerankConfig(rerankForm.value)
+    ElMessage.success('重排序配置已更新')
+    rerankDialogVisible.value = false
+    await fetchCapabilities()
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    savingRerank.value = false
   }
 }
 
