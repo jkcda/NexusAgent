@@ -2,8 +2,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { OpenAI } from 'openai'
 import { ChatOpenAI } from '@langchain/openai'
 import { ChatAnthropic } from '@langchain/anthropic'
-import config, { getSetting, updateSetting, defaultLLMConfig, defaultImageConfig, getMaskedSettings } from '../config/index.js'
-import type { CapabilityLLMConfig, CapabilityImageConfig } from './types.js'
+import config, { getSetting, updateSetting, defaultLLMConfig, defaultEmbeddingConfig, defaultRerankConfig, defaultImageConfig, getMaskedSettings } from '../config/index.js'
+import type { CapabilityLLMConfig, CapabilityEmbeddingConfig, CapabilityRerankConfig, CapabilityImageConfig } from './types.js'
 
 function maskKey(key: string): string {
   if (!key || key.length <= 8) return key ? '****' : ''
@@ -69,6 +69,44 @@ class ProviderManager {
     await updateSetting('CAPABILITY_IMAGE', JSON.stringify(merged))
   }
 
+  /** 读取向量化能力配置 */
+  getEmbeddingConfig(): CapabilityEmbeddingConfig {
+    const raw = getSetting('CAPABILITY_EMBEDDING')
+    if (raw) {
+      try { return { ...defaultEmbeddingConfig, ...JSON.parse(raw) } } catch {}
+    }
+    return { ...defaultEmbeddingConfig }
+  }
+
+  /** 保存向量化配置 */
+  async saveEmbeddingConfig(cfg: Partial<CapabilityEmbeddingConfig>): Promise<void> {
+    const current = this.getEmbeddingConfig()
+    if (cfg.apiKey && isMaskedKey(cfg.apiKey, current.apiKey)) {
+      delete cfg.apiKey
+    }
+    const merged = { ...current, ...cfg } satisfies CapabilityEmbeddingConfig
+    await updateSetting('CAPABILITY_EMBEDDING', JSON.stringify(merged))
+  }
+
+  /** 读取重排序能力配置 */
+  getRerankConfig(): CapabilityRerankConfig {
+    const raw = getSetting('CAPABILITY_RERANK')
+    if (raw) {
+      try { return { ...defaultRerankConfig, ...JSON.parse(raw) } } catch {}
+    }
+    return { ...defaultRerankConfig }
+  }
+
+  /** 保存重排序配置 */
+  async saveRerankConfig(cfg: Partial<CapabilityRerankConfig>): Promise<void> {
+    const current = this.getRerankConfig()
+    if (cfg.apiKey && isMaskedKey(cfg.apiKey, current.apiKey)) {
+      delete cfg.apiKey
+    }
+    const merged = { ...current, ...cfg } satisfies CapabilityRerankConfig
+    await updateSetting('CAPABILITY_RERANK', JSON.stringify(merged))
+  }
+
   // ═══════════════════════════════════════════════
   //  SDK 客户端工厂（基于能力配置）
   // ═══════════════════════════════════════════════
@@ -103,9 +141,9 @@ class ProviderManager {
     })
   }
 
-  /** 创建 OpenAI SDK 客户端（用于 embedding，基于 LLM 配置） */
+  /** 创建 OpenAI SDK 客户端（用于 embedding，基于向量化配置） */
   createOpenAIClient(): OpenAI {
-    const cfg = this.getLLMConfig()
+    const cfg = this.getEmbeddingConfig()
     return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL + '/v1' })
   }
 
@@ -335,9 +373,9 @@ class ProviderManager {
 
   async createEmbedding(texts: string[]): Promise<number[][]> {
     const client = this.createOpenAIClient()
-    const cfg = this.getLLMConfig()
+    const cfg = this.getEmbeddingConfig()
     const response = await client.embeddings.create({
-      model: cfg.embeddingModel,
+      model: cfg.model,
       input: texts,
     })
     return response.data.sort((a, b) => a.index - b.index).map(d => d.embedding)
@@ -372,10 +410,14 @@ class ProviderManager {
 
   getCapabilities() {
     const llm = this.getLLMConfig()
+    const emb = this.getEmbeddingConfig()
+    const rerank = this.getRerankConfig()
     const img = this.getImageConfig()
     // 脱敏返回，防止 API Key 通过浏览器 Network 面板泄露
     return {
       llm: { ...llm, apiKey: maskKey(llm.apiKey) },
+      embedding: { ...emb, apiKey: maskKey(emb.apiKey) },
+      rerank: { ...rerank, apiKey: maskKey(rerank.apiKey) },
       img: { ...img, apiKey: maskKey(img.apiKey) },
     }
   }

@@ -10,9 +10,18 @@ let _useApiFallback = false
 
 /** 检查服务器资源是否足够跑本地模型 */
 function hasEnoughMemory(): boolean {
+  // 检查是否强制使用 API（管理员在向量化配置中设置的）
+  try {
+    const { providerManager } = require('../providers/index.js')
+    const embCfg = providerManager.getEmbeddingConfig()
+    if (embCfg.forceAPI) {
+      console.log('[Embedding] 向量化配置为 forceAPI，跳过本地模型')
+      return false
+    }
+  } catch {}
+
   const freeMem = Math.round(os.freemem() / (1024 * 1024))
   const cpuCount = os.cpus().length
-  // 2核4G 服务器空闲内存通常 800-1500MB，本地模型需要约 600MB
   const minFreeMem = cpuCount <= 2 ? 800 : 500
   if (freeMem < minFreeMem) {
     console.warn(`[Embedding] 服务器资源不足（CPU:${cpuCount}核, 空闲内存:${freeMem}MB < ${minFreeMem}MB），降级为 API 向量化`)

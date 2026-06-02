@@ -270,9 +270,31 @@ router.get('/capabilities', authMiddleware, (_req, res) => {
 // PUT /api/admin/capabilities/llm - 更新 LLM 能力配置（所有登录用户可用）
 router.put('/capabilities/llm', authMiddleware, async (req, res) => {
   try {
-    const { apiKey, format, baseURL, model, embeddingModel, requestTemplate, name } = req.body
-    await providerManager.saveLLMConfig({ apiKey, format, baseURL, model, embeddingModel, requestTemplate, name })
+    const { apiKey, format, baseURL, model, requestTemplate, name } = req.body
+    await providerManager.saveLLMConfig({ apiKey, format, baseURL, model, requestTemplate, name })
     ApiResponse.success(res, null, 'LLM 配置已更新')
+  } catch (error: any) {
+    ApiResponse.internalServerError(res, '服务器错误', error.message)
+  }
+})
+
+// PUT /api/admin/capabilities/embedding - 更新向量化能力配置
+router.put('/capabilities/embedding', authMiddleware, async (req, res) => {
+  try {
+    const { apiKey, baseURL, model, forceAPI, name } = req.body
+    await providerManager.saveEmbeddingConfig({ apiKey, baseURL, model, forceAPI, name })
+    ApiResponse.success(res, null, '向量化配置已更新')
+  } catch (error: any) {
+    ApiResponse.internalServerError(res, '服务器错误', error.message)
+  }
+})
+
+// PUT /api/admin/capabilities/rerank - 更新重排序能力配置
+router.put('/capabilities/rerank', authMiddleware, async (req, res) => {
+  try {
+    const { apiKey, baseURL, model, forceAPI, name } = req.body
+    await providerManager.saveRerankConfig({ apiKey, baseURL, model, forceAPI, name })
+    ApiResponse.success(res, null, '重排序配置已更新')
   } catch (error: any) {
     ApiResponse.internalServerError(res, '服务器错误', error.message)
   }

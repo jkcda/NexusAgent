@@ -6,6 +6,8 @@ dotenv.config()
 const SETTING_KEYS = [
   // 能力配置（以能力为中心，JSON 格式含 apiKey）
   'CAPABILITY_LLM',
+  'CAPABILITY_EMBEDDING',
+  'CAPABILITY_RERANK',
   'CAPABILITY_IMAGE',
   // 联网搜索
   'TAVILY_API_KEY',
@@ -24,6 +26,8 @@ const settings = new Map<SettingKey, string>()
 
 const ENV_MAP: Record<SettingKey, string | undefined> = {
   CAPABILITY_LLM: undefined,        // 不从 env 加载，由 Manager 自行 fallback
+  CAPABILITY_EMBEDDING: undefined,
+  CAPABILITY_RERANK: undefined,
   CAPABILITY_IMAGE: undefined,
   TAVILY_API_KEY: process.env.TAVILY_API_KEY,
   EMAIL_USER: process.env.EMAIL_USER,
@@ -72,6 +76,8 @@ export async function updateSetting(key: string, value: string): Promise<void> {
 export function getMaskedSettings(): { key_name: string; description: string; masked: string }[] {
   const desc: Record<SettingKey, string> = {
     CAPABILITY_LLM: '大语言模型能力配置（JSON，含 API Key / 格式 / 模型等）',
+    CAPABILITY_EMBEDDING: '向量化能力配置（JSON，含 API Key / 模型等）',
+    CAPABILITY_RERANK: '重排序能力配置（JSON，含 API Key / 模型等）',
     CAPABILITY_IMAGE: '图片生成能力配置（JSON，含 API Key / 模型 / 尺寸等）',
     TAVILY_API_KEY: 'Tavily API Key（联网搜索）',
     EMAIL_USER: 'QQ邮箱 SMTP 登录账号',
@@ -98,8 +104,25 @@ export const defaultLLMConfig = {
   format: 'openai' as const,
   baseURL: 'https://api-inference.modelscope.cn',
   model: 'Qwen/Qwen3.5-397B-A17B',
-  embeddingModel: 'BAAI/bge-small-zh-v1.5',
   requestTemplate: '',
+}
+
+/** 向量化默认配置（独立于 LLM，切换对话模型不影响向量检索） */
+export const defaultEmbeddingConfig = {
+  name: '本地模型',
+  apiKey: process.env.DASHSCOPE_API_KEY || process.env.OPENAI_API_KEY || '',
+  baseURL: 'https://api-inference.modelscope.cn',
+  model: 'BAAI/bge-small-zh-v1.5',
+  forceAPI: false,
+}
+
+/** 重排序默认配置（独立于 LLM，切换对话模型不影响重排序） */
+export const defaultRerankConfig = {
+  name: '本地模型',
+  apiKey: '',
+  baseURL: '',
+  model: '',
+  forceAPI: false,
 }
 
 /** 图片生成默认配置 */

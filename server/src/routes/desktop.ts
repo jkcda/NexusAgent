@@ -68,18 +68,8 @@ router.delete('/sessions/:sessionId', async (req: Request, res: Response) => {
 // GET /api/desktop/settings - 获取当前配置
 router.get('/settings', async (_req: Request, res: Response) => {
   try {
-    const llmCfg = providerManager.getLLMConfig()
-    // Mask API key: show only first 4 + last 4 chars
-    const apiKey = llmCfg.apiKey || ''
-    const masked = apiKey.length > 8 ? apiKey.slice(0, 4) + '***' + apiKey.slice(-4) : apiKey ? '****' : ''
-    ApiResponse.success(res, {
-      name: llmCfg.name,
-      model: llmCfg.model,
-      baseURL: llmCfg.baseURL,
-      apiKey: masked,
-      format: llmCfg.format,
-      requestTemplate: (llmCfg as any).requestTemplate || '',
-    })
+    const caps = providerManager.getCapabilities()
+    ApiResponse.success(res, { capabilities: caps })
   } catch (err: any) {
     ApiResponse.internalServerError(res, '获取配置失败', err.message)
   }

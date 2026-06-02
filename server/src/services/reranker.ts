@@ -13,6 +13,16 @@ let _disabled = false
 const MODEL = 'Xenova/bge-reranker-base'
 
 function hasEnoughMemory(): boolean {
+  // 检查是否强制使用 API 重排序
+  try {
+    const { providerManager } = require('../providers/index.js')
+    const rerankCfg = providerManager.getRerankConfig()
+    if (rerankCfg.forceAPI) {
+      console.log('[Reranker] 重排序配置为 forceAPI，跳过本地模型')
+      return false
+    }
+  } catch {}
+
   const freeMem = Math.round(os.freemem() / (1024 * 1024))
   const cpuCount = os.cpus().length
   const minFreeMem = cpuCount <= 2 ? 1200 : 800

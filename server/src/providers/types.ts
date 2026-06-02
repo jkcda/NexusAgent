@@ -7,8 +7,25 @@ export interface CapabilityLLMConfig {
   format: 'openai' | 'anthropic'
   baseURL: string
   model: string
-  embeddingModel: string
   requestTemplate: string
+}
+
+export interface CapabilityEmbeddingConfig {
+  name: string
+  apiKey: string
+  baseURL: string
+  model: string
+  /** 是否强制使用 API（跳过本地模型），低配服务器推荐开启 */
+  forceAPI: boolean
+}
+
+export interface CapabilityRerankConfig {
+  name: string
+  apiKey: string
+  baseURL: string
+  model: string
+  /** 强制使用 API 重排序（跳过本地模型），低配服务器推荐开启 */
+  forceAPI: boolean
 }
 
 export interface CapabilityImageConfig {
