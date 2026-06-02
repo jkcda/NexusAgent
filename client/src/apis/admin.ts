@@ -26,6 +26,7 @@ export const createUser = (data: {
   email: string
   password: string
   role?: string
+  department?: string
 }) => {
   return request.post('/admin/users', data)
 }
@@ -36,8 +37,19 @@ export const updateUser = (id: number, data: {
   email?: string
   password?: string
   role?: string
+  department?: string
 }) => {
   return request.put(`/admin/users/${id}`, data)
+}
+
+// 获取部门列表
+export const getDepartments = () => {
+  return request.get('/admin/departments')
+}
+
+// 获取反馈统计
+export const getFeedbackStats = () => {
+  return request.get('/admin/feedback-stats')
 }
 
 // 删除用户

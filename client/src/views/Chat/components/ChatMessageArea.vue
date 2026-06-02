@@ -12,6 +12,18 @@
         </el-button>
         <h2>{{ currentAgent ? currentAgent.name + ' · 角色扮演' : '奈克瑟 · 情报同步' }}</h2>
         <img :src="currentAvatar" alt="AI" class="chat-header-avatar" />
+        <!-- Token 用量环 -->
+        <el-tooltip v-if="contextPercent > 0" :content="`上下文: ${Math.round(contextPercent)}% / 110,000 tokens${contextPercent > 80 ? '（接近上限）' : ''}`" placement="bottom">
+          <div class="token-gauge">
+            <svg width="28" height="28" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-border)" stroke-width="3" />
+              <circle cx="18" cy="18" r="15" fill="none" :stroke="tokenRingColor" stroke-width="3"
+                stroke-dasharray="94.2" :stroke-dashoffset="94.2 - (94.2 * contextPercent / 100)"
+                stroke-linecap="round" transform="rotate(-90 18 18)" />
+              <text x="18" y="20" text-anchor="middle" font-size="9" :fill="tokenRingColor">{{ Math.round(contextPercent) }}%</text>
+            </svg>
+          </div>
+        </el-tooltip>
       </div>
       <el-button
         v-if="currentSessionId"
@@ -109,15 +121,26 @@
             </div>
           </div>
         </div>
-        <el-button
-          v-if="msg.role === 'assistant' && msg.content"
-          class="speak-btn"
-          size="small"
-          text
-          @click="speakMessage(msg.content)"
-        >
-          <el-icon :size="16"><Headset /></el-icon>
-        </el-button>
+        <div v-if="msg.role === 'user' && userAvatarUrl" class="message-avatar user-avatar">
+          <img :src="userAvatarUrl" alt="User" />
+        </div>
+        <!-- 反馈按钮 -->
+        <div v-if="msg.role === 'assistant' && msg.content && !isLoading" class="feedback-btns">
+          <el-button
+            size="small"
+            text
+            :type="(msg as any)._feedback === 'up' ? 'primary' : undefined"
+            :icon="CircleCheckFilled"
+            @click="submitFeedback(msg as any, index, 'up')"
+          />
+          <el-button
+            size="small"
+            text
+            :type="(msg as any)._feedback === 'down' ? 'danger' : undefined"
+            :icon="CircleCloseFilled"
+            @click="submitFeedback(msg as any, index, 'down')"
+          />
+        </div>
       </div>
       <div v-if="isLoading && typingMessageIndex === -1" class="message assistant">
         <div class="message-content typing-indicator">
@@ -148,14 +171,6 @@
       </div>
     </div>
 
-    <!-- 录音状态条 -->
-    <div v-if="isRecording" class="recording-bar">
-      <span class="recording-dot"></span>
-      <span class="recording-timer">{{ formatDuration(recordingDuration) }}</span>
-      <el-button size="small" text type="danger" @click="handleCancelRecording">取消</el-button>
-      <el-button size="small" type="primary" @click="handleStopRecording">完成</el-button>
-    </div>
-
     <div class="chat-input">
       <!-- 移动端附加面板 -->
       <div v-if="isMobile && showMobileExtras" class="mobile-extras-panel">
@@ -163,25 +178,18 @@
           <div class="mobile-extras-section">
             <span class="mobile-extras-label">上传</span>
             <div class="mobile-extras-btns">
-              <template v-if="!currentAgent">
-                <input ref="imageInputRef" type="file" accept="image/*" multiple hidden @change="onFilesSelected($event, 'image')" />
-                <el-button size="small" @click="imageInputRef?.click()"><el-icon><PictureFilled /></el-icon>图片</el-button>
-                <input ref="docInputRef" type="file" accept=".txt,.pdf,.doc,.docx,.md" multiple hidden @change="onFilesSelected($event, 'doc')" />
-                <el-button size="small" @click="docInputRef?.click()"><el-icon><FolderOpened /></el-icon>文档</el-button>
-                <input ref="videoInputRef" type="file" accept="video/*" hidden @change="onFilesSelected($event, 'video')" />
-                <el-button size="small" @click="videoInputRef?.click()"><el-icon><VideoCameraFilled /></el-icon>视频</el-button>
-              </template>
-              <el-button size="small" :type="isRecording ? 'danger' : undefined" @click="toggleRecording">
-                <el-icon><Microphone /></el-icon>语音
-              </el-button>
+              <input ref="fileInputRef" type="file" multiple hidden @change="onFilesSelected" />
+              <el-button size="small" @click="fileInputRef?.click()"><el-icon><UploadFilled /></el-icon>上传文件</el-button>
             </div>
           </div>
           <div class="mobile-extras-section">
             <span class="mobile-extras-label">设置</span>
             <div class="mobile-extras-selects">
-              <el-select v-if="kbList.length > 0" :model-value="selectedKbId" placeholder="知识库" clearable size="small" @update:model-value="$emit('update:selectedKbId', $event ?? null)">
+              <el-select v-if="kbList.length > 0" :model-value="selectedKbIds" placeholder="知识库" clearable multiple collapse-tags size="small" @update:model-value="$emit('update:selectedKbIds', $event ?? [])">
                 <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
               </el-select>
+              <el-switch v-if="kbList.length > 0" :model-value="forceKbRetrieval" size="small" active-text="知识库" inactive-text="关" @change="$emit('update:forceKbRetrieval', $event)" />
+              <el-switch :model-value="webSearchEnabled" size="small" active-text="联网" inactive-text="关" @change="$emit('update:webSearchEnabled', $event)" />
               <el-select v-if="modelList.length > 0" :model-value="selectedModel" size="small" @update:model-value="$emit('update:selectedModel', $event ?? '')">
                 <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
               </el-select>
@@ -190,70 +198,26 @@
               </el-select>
             </div>
           </div>
-          <div class="mobile-extras-section">
-            <span class="mobile-extras-label">开关</span>
-            <div class="mobile-extras-toggles">
-              <el-switch :model-value="autoSpeakEnabled" size="small" active-text="朗读" @change="onAutoSpeakToggle" />
-              <el-select v-if="autoSpeakEnabled && voices.length > 0" :model-value="selectedVoiceId" size="small" style="width: 100px" @update:model-value="onVoiceSelect">
-                <el-option v-for="v in voices" :key="v.id" :label="v.name" :value="v.id" />
-              </el-select>
-            </div>
-          </div>
         </div>
       </div>
 
       <!-- 桌面端布局 -->
       <template v-if="!isMobile">
-        <!-- 展开的附加功能面板 -->
-        <div v-if="showExtras" class="desktop-extras-panel">
-          <div class="extras-grid">
-            <div class="extras-section">
-              <span class="extras-label">上传</span>
-              <div class="extras-btns">
-                <template v-if="!currentAgent">
-                  <input ref="imageInputRef" type="file" accept="image/*" multiple hidden @change="onFilesSelected($event, 'image')" />
-                  <el-button size="small" @click="imageInputRef?.click()"><el-icon><PictureFilled /></el-icon>图片</el-button>
-                  <input ref="docInputRef" type="file" accept=".txt,.pdf,.doc,.docx,.md" multiple hidden @change="onFilesSelected($event, 'doc')" />
-                  <el-button size="small" @click="docInputRef?.click()"><el-icon><FolderOpened /></el-icon>文档</el-button>
-                  <input ref="videoInputRef" type="file" accept="video/*" hidden @change="onFilesSelected($event, 'video')" />
-                  <el-button size="small" @click="videoInputRef?.click()"><el-icon><VideoCameraFilled /></el-icon>视频</el-button>
-                </template>
-                <el-button size="small" :type="isRecording ? 'danger' : undefined" @click="toggleRecording">
-                  <el-icon><Microphone /></el-icon>语音
-                </el-button>
-              </div>
-            </div>
-            <div class="extras-section">
-              <span class="extras-label">设置</span>
-              <div class="extras-selects">
-                <el-select v-if="kbList.length > 0" :model-value="selectedKbId" placeholder="知识库" clearable size="small" @update:model-value="$emit('update:selectedKbId', $event ?? null)">
-                  <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
-                </el-select>
-                <el-select v-if="modelList.length > 0" :model-value="selectedModel" size="small" @update:model-value="$emit('update:selectedModel', $event ?? '')">
-                  <el-option v-for="m in modelList" :key="m.id" :label="m.name" :value="m.id" />
-                </el-select>
-                <el-select v-if="imageRatios.length > 0" :model-value="selectedImageRatio" size="small" @update:model-value="$emit('update:selectedImageRatio', $event ?? '')">
-                  <el-option v-for="r in imageRatios" :key="r.value" :label="r.label" :value="r.value" />
-                </el-select>
-                <el-switch :model-value="autoSpeakEnabled" size="small" active-text="朗读" @change="onAutoSpeakToggle" />
-                <el-select v-if="autoSpeakEnabled && voices.length > 0" :model-value="selectedVoiceId" size="small" style="width: 100px" @update:model-value="onVoiceSelect">
-                  <el-option v-for="v in voices" :key="v.id" :label="v.name" :value="v.id" />
-                </el-select>
-              </div>
-            </div>
-          </div>
+        <div class="desktop-toolbar">
+          <input ref="fileInputRef" type="file" multiple hidden @change="onFilesSelected" />
+          <el-tooltip content="上传文件" placement="top">
+            <el-button size="small" text class="toolbar-btn" @click="fileInputRef?.click()">
+              <el-icon :size="18"><UploadFilled /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <span class="toolbar-divider"></span>
+          <el-select v-if="kbList.length > 0" :model-value="selectedKbIds" placeholder="知识库" clearable multiple collapse-tags size="small" class="toolbar-select" @update:model-value="$emit('update:selectedKbIds', $event ?? [])">
+            <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+          </el-select>
+          <el-switch v-if="kbList.length > 0" :model-value="forceKbRetrieval" size="small" active-text="知识库" @change="$emit('update:forceKbRetrieval', $event)" />
+          <el-switch :model-value="webSearchEnabled" size="small" active-text="联网" @change="$emit('update:webSearchEnabled', $event)" />
         </div>
-
         <div class="input-row">
-          <el-button
-            class="extras-toggle"
-            :class="{ active: showExtras }"
-            size="small"
-            circle
-            @click="showExtras = !showExtras"
-          >
-            <el-icon :size="20"><Plus /></el-icon>
-          </el-button>
           <el-input
             v-model="inputMessage"
             type="textarea"
@@ -312,11 +276,9 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { ElMessage } from 'element-plus'
-import { PictureFilled, FolderOpened, Document, Close, ArrowDown, Menu, VideoCameraFilled, Microphone, Headset, ZoomIn, ZoomOut, RefreshLeft, Download, Plus, Promotion } from '@element-plus/icons-vue'
+import { Document, Close, ArrowDown, Menu, ZoomIn, ZoomOut, RefreshLeft, Download, Plus, Promotion, CircleCheckFilled, CircleCloseFilled, UploadFilled } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { useVoiceRecording, uploadVoiceForTranscription } from '@/utils/voiceRecording'
-import { speak, autoSpeakEnabled, toggleAutoSpeak, voices, selectedVoiceId, selectVoice, loadVoices } from '@/utils/tts'
 
 marked.setOptions({
   breaks: true,
@@ -360,7 +322,11 @@ const props = defineProps<{
   typingMessageIndex: number
   currentSessionId: string
   kbList: KbItem[]
-  selectedKbId: number | null
+  selectedKbIds: number[]
+  forceKbRetrieval: boolean
+  webSearchEnabled: boolean
+  userAvatarUrl: string
+  contextPercent: number
   modelList: { id: string; name: string; type: string; desc: string }[]
   selectedModel: string
   imageRatios: { label: string; value: string }[]
@@ -374,17 +340,24 @@ const emit = defineEmits<{
   send: [payload: { content: string; files: File[] }]
   clearHistory: []
   toggleSidebar: []
-  'update:selectedKbId': [value: number | null]
+  'update:selectedKbIds': [value: number[]]
+  'update:forceKbRetrieval': [value: boolean]
+  'update:webSearchEnabled': [value: boolean]
   'update:selectedModel': [value: string]
   'update:selectedImageRatio': [value: string]
   createSessionWithAgent: [agent: AgentItem | null]
+  feedback: [data: { sessionId: string; messageIndex: number; rating: 'up' | 'down' }]
 }>()
+
+const tokenRingColor = computed(() => {
+  if (props.contextPercent > 80) return '#f56c6c'
+  if (props.contextPercent > 50) return '#e6a23c'
+  return '#67c23a'
+})
 
 const inputMessage = ref('')
 const messagesContainer = ref<HTMLElement>()
-const imageInputRef = ref<HTMLInputElement>()
-const docInputRef = ref<HTMLInputElement>()
-const videoInputRef = ref<HTMLInputElement>()
+const fileInputRef = ref<HTMLInputElement>()
 
 interface SelectedFile {
   file: File
@@ -398,7 +371,6 @@ const selectedFiles = ref<SelectedFile[]>([])
 // 移动端附加面板
 const isMobile = useMediaQuery('(max-width: 768px)')
 const showMobileExtras = ref(false)
-const showExtras = ref(false)
 
 // 当前角色头像
 const currentAvatar = computed(() => {
@@ -465,68 +437,6 @@ async function downloadImage(url: string) {
   }
 }
 
-// Voice recording
-const { isRecording, duration: recordingDuration, audioBlob,
-         startRecording, stopRecording, cancelRecording } = useVoiceRecording()
-
-async function toggleRecording() {
-  if (isRecording.value) {
-    await handleStopRecording()
-  } else {
-    await startRecording()
-  }
-}
-
-async function handleStopRecording() {
-  stopRecording()
-  // 等待 audioBlob 就绪（MediaRecorder.onstop 是异步的）
-  for (let i = 0; i < 50; i++) {
-    await new Promise(r => setTimeout(r, 100))
-    if (audioBlob.value) break
-  }
-  if (!audioBlob.value) {
-    ElMessage.warning('录音数据未就绪，请重试')
-    return
-  }
-
-  try {
-    const text = await uploadVoiceForTranscription(audioBlob.value)
-    if (text) {
-      inputMessage.value = inputMessage.value
-        ? inputMessage.value + '\n' + text
-        : text
-      ElMessage.success('语音识别完成')
-    } else {
-      ElMessage.warning('未识别到语音内容')
-    }
-  } catch (e: any) {
-    ElMessage.error(e.message || '语音识别失败')
-  }
-}
-
-function handleCancelRecording() {
-  cancelRecording()
-}
-
-function formatDuration(sec: number): string {
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-}
-
-// TTS
-function speakMessage(content: string) {
-  speak(content)
-}
-
-function onAutoSpeakToggle() {
-  toggleAutoSpeak()
-}
-
-function onVoiceSelect(id: string) {
-  selectVoice(id)
-}
-
 function renderMarkdown(content: string): string {
   if (!content) return ''
   const raw = marked.parse(content) as string
@@ -547,7 +457,7 @@ function addFiles(files: FileList | File[]) {
   }
 }
 
-function onFilesSelected(event: Event, _source: 'image' | 'doc' | 'video') {
+function onFilesSelected(event: Event) {
   const input = event.target as HTMLInputElement
   if (input.files) addFiles(input.files)
   input.value = ''
@@ -600,11 +510,17 @@ async function scrollToBottom() {
   }
 }
 
+function submitFeedback(msg: any, index: number, rating: 'up' | 'down') {
+  if (!props.currentSessionId) return
+  if (msg._feedback === rating) return // Already rated same
+  msg._feedback = rating
+  emit('feedback', { sessionId: props.currentSessionId, messageIndex: index, rating })
+}
+
 // markdown 图片骨架屏：监听消息容器中新增的 img，附加 load 监听
 let imgObserver: MutationObserver | null = null
 
 onMounted(() => {
-  loadVoices()
   if (messagesContainer.value) {
     imgObserver = new MutationObserver((mutations) => {
       for (const m of mutations) {
@@ -663,6 +579,13 @@ defineExpose({ scrollToBottom })
   box-shadow: var(--shadow-gold-glow);
   object-fit: cover;
   margin-left: 10px;
+}
+
+.token-gauge {
+  margin-left: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
 }
 
 .chat-header h2 {
@@ -1091,57 +1014,35 @@ defineExpose({ scrollToBottom })
   margin-bottom: 0;
 }
 
-/* 附加功能面板 */
-.desktop-extras-panel {
-  margin-bottom: 10px;
-  padding: 12px 16px;
-  background: var(--color-bg-deep);
-  border-radius: var(--radius-sm);
-  border: var(--border-thin) var(--color-border);
-}
-
-.extras-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.extras-section {
+/* 桌面端内联工具栏 */
+.desktop-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 2px;
 }
 
-.extras-label {
-  font-size: 12px;
+.toolbar-btn {
   color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+}
+
+.toolbar-btn:hover {
+  color: var(--color-magic-gold);
+  background: transparent;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--color-border);
+  margin: 0 4px;
   flex-shrink: 0;
 }
 
-.extras-btns {
-  display: flex;
-  gap: 4px;
-}
-
-.extras-selects {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-/* + 号切换按钮 */
-.extras-toggle {
-  flex-shrink: 0;
-  transition: transform 0.2s, background var(--transition-fast);
-  width: 36px;
-  height: 36px;
-}
-
-.extras-toggle.active {
-  transform: rotate(45deg);
-  background: var(--color-bg-input);
-  border-color: var(--color-magic-gold);
+.toolbar-select {
+  width: 140px;
 }
 
 .text-input {
@@ -1302,6 +1203,36 @@ defineExpose({ scrollToBottom })
   color: var(--color-magic-gold);
 }
 
+.feedback-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-left: 4px;
+  margin-bottom: 2px;
+  opacity: 0.4;
+  transition: opacity var(--transition-fast);
+}
+
+.feedback-btns:hover {
+  opacity: 1;
+}
+
+.user-avatar {
+  margin-right: 0 !important;
+  margin-left: 10px !important;
+  align-self: flex-start !important;
+}
+
+.user-avatar img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--color-primary);
+}
+
 .mobile-menu-btn {
   display: none;
 }
@@ -1310,6 +1241,16 @@ defineExpose({ scrollToBottom })
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.ref-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 2px solid var(--color-magic-gold);
+  flex-shrink: 0;
 }
 
 @media (max-width: 768px) {

@@ -5,6 +5,8 @@ import { chunkDocument } from './documentPipeline.js'
 import { addDocuments, deleteDocumentsByDocId, similaritySearch } from './vectorStore.js'
 import { cacheGet, cacheSet, cacheDel } from './cache.js'
 import config from '../config/index.js'
+import fs from 'fs'
+import path from 'path'
 import type { Document } from '@langchain/core/documents'
 
 export async function createKnowledgeBase(
@@ -24,6 +26,16 @@ export async function getUserKnowledgeBases(userId: number) {
   if (cached) return cached
 
   const kbs = await KnowledgeBaseModel.findByUserId(userId)
+  await cacheSet(key, kbs, config.redis.ttl.kbList)
+  return kbs
+}
+
+export async function getAllKnowledgeBases() {
+  const key = 'kb:list:all'
+  const cached = await cacheGet<any[]>(key)
+  if (cached) return cached
+
+  const kbs = await KnowledgeBaseModel.findAll()
   await cacheSet(key, kbs, config.redis.ttl.kbList)
   return kbs
 }
@@ -52,11 +64,18 @@ export async function addDocumentToKB(
   filename: string,
   mimeType: string,
   fileSize: number
-): Promise<{ docId: number; chunkCount: number }> {
+): Promise<{ docId: number; chunkCount: number; duplicate?: boolean; version?: number }> {
   const kb = await KnowledgeBaseModel.findById(kbId)
   if (!kb) throw new Error('知识库不存在')
 
-  const docId = await KbDocumentModel.create(kbId, filename, filePath, mimeType, fileSize)
+  const { docId, isDuplicate, version } = await KbDocumentModel.create(kbId, filename, filePath, mimeType, fileSize)
+
+  if (isDuplicate) {
+    const doc = await KbDocumentModel.findById(docId)
+    try { fs.unlinkSync(filePath) } catch {}
+    return { docId, chunkCount: doc?.chunk_count || 0, duplicate: true, version }
+  }
+
   await KbDocumentModel.updateStatus(docId, 'processing')
 
   try {
@@ -77,7 +96,7 @@ export async function addDocumentToKB(
     await cacheDel(`kb:list:${kb.user_id}`)
     await cacheDel(`rag:${kbId}:*`)
 
-    return { docId, chunkCount: docs.length }
+    return { docId, chunkCount: docs.length, duplicate: false, version }
   } catch (err: any) {
     await KbDocumentModel.updateStatus(docId, 'failed', 0, err.message)
     throw err
@@ -97,6 +116,26 @@ export async function getKBDocuments(kbId: number) {
 export async function removeDocumentFromKB(docId: number): Promise<void> {
   const result = await KbDocumentModel.delete(docId)
   if (!result) throw new Error('文档不存在')
+
+  // 删除物理文件
+  if (result.filePath) {
+    try {
+      if (fs.existsSync(result.filePath)) {
+        fs.unlinkSync(result.filePath)
+      }
+    } catch (e) {
+      console.error(`[removeDocumentFromKB] 删除文件失败: ${result.filePath}`, e)
+    }
+
+    try {
+      const previewPath = path.join(process.cwd(), 'uploads', 'previews', path.basename(result.filePath, path.extname(result.filePath)) + '.pdf')
+      if (fs.existsSync(previewPath)) {
+        fs.unlinkSync(previewPath)
+      }
+    } catch (e) {
+      console.error(`[removeDocumentFromKB] 删除预览缓存失败`, e)
+    }
+  }
 
   const kb = await KnowledgeBaseModel.findById(result.kbId)
   if (kb) {

@@ -4,6 +4,7 @@ import { adminMiddleware } from '../middleware/admin.js'
 import { authMiddleware } from '../middleware/auth.js'
 import { ApiResponse } from '../utils/response.js'
 import { ChatHistoryModel } from '../models/chatHistory.js'
+import { ChatFeedbackModel } from '../models/chatFeedback.js'
 import { UserModel } from '../models/user.js'
 import { getMaskedSettings, getSetting, updateSetting } from '../config/index.js'
 import config, { defaultImageConfig } from '../config/index.js'
@@ -14,18 +15,24 @@ const router = express.Router()
 
 // 所有后台管理接口都需要先认证，再验证管理员权限
 
-// GET /api/admin/dashboard - 后台管理首页
-router.get('/dashboard', authMiddleware, adminMiddleware, (req, res) => {
-  ApiResponse.success(res, {
-    user: (req as any).user
-  }, '欢迎访问后台管理系统')
+// GET /api/admin/dashboard - 后台管理仪表盘
+router.get('/dashboard', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const stats = await ChatHistoryModel.getDashboardStats()
+    ApiResponse.success(res, {
+      user: (req as any).user,
+      stats
+    }, '获取统计数据成功')
+  } catch (error: any) {
+    ApiResponse.internalServerError(res, '获取统计数据失败', error.message)
+  }
 })
 
 // GET /api/admin/users - 获取所有用户列表（仅管理员）
 router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const [rows] = await pool.execute(
-      'SELECT id, username, email, role, created_at FROM users ORDER BY created_at DESC'
+      'SELECT id, username, email, role, department, created_at FROM users ORDER BY created_at DESC'
     )
     ApiResponse.success(res, { users: rows }, '获取用户列表成功')
   } catch (error: any) {
@@ -36,7 +43,7 @@ router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
 // POST /api/admin/users - 创建用户（仅管理员）
 router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const { username, email, password, role } = req.body
+    const { username, email, password, role, department } = req.body
 
     // 参数验证
     if (!username || !email || !password) {
@@ -74,11 +81,12 @@ router.post('/users', authMiddleware, adminMiddleware, async (req, res) => {
       username,
       email,
       password: hashedPassword,
-      role: role === 'admin' ? 'admin' : 'user'
+      role: role === 'admin' ? 'admin' : 'user',
+      department
     })
 
     ApiResponse.created(res, {
-      user: { id: userId, username, email, role: role === 'admin' ? 'admin' : 'user' }
+      user: { id: userId, username, email, role: role === 'admin' ? 'admin' : 'user', department }
     }, '创建用户成功')
   } catch (error: any) {
     ApiResponse.internalServerError(res, '服务器错误', error.message)
@@ -93,7 +101,7 @@ router.put('/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
       return ApiResponse.badRequest(res, '无效的用户ID')
     }
 
-    const { username, email, password, role } = req.body
+    const { username, email, password, role, department } = req.body
 
     // 检查用户是否存在
     const user = await UserModel.findById(userId)
@@ -151,6 +159,10 @@ router.put('/users/:id', authMiddleware, adminMiddleware, async (req, res) => {
       }
       updates.push('role = ?')
       params.push(role)
+    }
+    if (department !== undefined) {
+      updates.push('department = ?')
+      params.push(department)
     }
 
     if (updates.length === 0) {
@@ -294,6 +306,31 @@ router.put('/settings', authMiddleware, adminMiddleware, async (req, res) => {
       return ApiResponse.badRequest(res, error.message)
     }
     ApiResponse.internalServerError(res, '服务器错误', error.message)
+  }
+})
+
+// GET /api/admin/feedback-stats - 反馈统计数据
+router.get('/feedback-stats', authMiddleware, adminMiddleware, async (_req, res) => {
+  try {
+    const [all, today] = await Promise.all([
+      ChatFeedbackModel.getStats(),
+      ChatFeedbackModel.getTodayStats()
+    ])
+    ApiResponse.success(res, { all, today }, '获取反馈统计成功')
+  } catch (error: any) {
+    ApiResponse.internalServerError(res, '获取反馈统计失败', error.message)
+  }
+})
+
+// GET /api/admin/departments - 获取所有部门列表
+router.get('/departments', authMiddleware, adminMiddleware, async (_req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department != \'\' ORDER BY department ASC'
+    )
+    ApiResponse.success(res, { departments: (rows as any[]).map(r => r.department) })
+  } catch (error: any) {
+    ApiResponse.internalServerError(res, '获取部门列表失败', error.message)
   }
 })
 

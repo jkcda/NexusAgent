@@ -14,9 +14,20 @@ import voiceRouter from './routes/voice.js'
 import mcpRouter from './routes/mcp.js'
 import agentRouter from './routes/agent.js'
 import roomRouter from './routes/room.js'
+import fsRouter from './routes/fs.js'
+import desktopRouter from './routes/desktop.js'
+import { initFromConfig } from './services/workspaceState.js'
 import config, { initDynamicConfig, getSetting } from './config/index.js'
 import { rateLimiter } from './utils/rateLimit.js'
+import { idempotencyGuardFor } from './utils/idempotency.js'
 import fs from 'fs'
+
+// 过滤 pdf-parse 的无害警告
+const _origWarn = console.warn
+console.warn = (...args: any[]) => {
+  if (typeof args[0] === 'string' && args[0].includes('TT: undefined function')) return
+  _origWarn(...args)
+}
 
 // 从数据库加载动态配置（API Key 等），失败时回退环境变量
 initDynamicConfig()
@@ -53,8 +64,18 @@ app.use(rateLimiter({ windowMs: 60000, max: 100 }))
 // AI 对话接口额外限流: 每 IP 每30秒 5 次
 app.use('/api/ai/chat', rateLimiter({ windowMs: 30000, max: 5 }))
 
+// 幂等性保护：防止重复提交
+app.use(idempotencyGuardFor([
+  '/api/kb',
+  '/api/ai/chat',
+  '/api/user/register'
+]))
+
 // 静态文件服务 — 上传文件访问
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')))
+
+// 初始化工作区根目录（从配置加载默认值，后续可通过 PUT /api/fs/workspace 覆盖）
+initFromConfig(config.workspace.root)
 
 // 确保 LanceDB 数据目录存在
 const lancedbDir = path.resolve(config.lancedb.dataDir)
@@ -70,6 +91,8 @@ app.use('/api/kb', knowledgeBaseRouter)
 app.use('/api', uploadRouter)
 app.use('/api/agents', agentRouter)
 app.use('/api/rooms', roomRouter)
+app.use('/api/fs', fsRouter)
+app.use('/api/desktop', desktopRouter)
 app.use('/api/voice', voiceRouter)
 app.use('/api/mcp', mcpRouter)
 
@@ -110,6 +133,14 @@ import('./services/videoProcessor.js').then(m => {
 import('./services/embedding.js').then(m => {
   m.preloadEmbeddingModel()
 }).catch(() => {})
+
+// 后台预加载本地 Reranker 模型
+import('./services/reranker.js').then(m => {
+  m.preloadReranker()
+}).catch(() => {})
+
+// 确保聊天反馈表存在
+import('./models/chatFeedback.js').catch(() => {})
 
 // 初始化 MCP 连接（Playwright 浏览器）
 import('./services/mcp.js').then(m => {

@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { OpenAI } from 'openai'
 import { ChatOpenAI } from '@langchain/openai'
+import { ChatAnthropic } from '@langchain/anthropic'
 import config, { getSetting, updateSetting, defaultLLMConfig, defaultImageConfig, getMaskedSettings } from '../config/index.js'
 import type { CapabilityLLMConfig, CapabilityImageConfig } from './types.js'
 
@@ -78,15 +79,27 @@ class ProviderManager {
     return new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
   }
 
-  /** 创建 LangChain ChatOpenAI 模型（基于 LLM 配置） */
-  createLangChainModel(): ChatOpenAI {
+  /** 创建 LangChain 模型（基于 LLM 配置，自动选择 OpenAI 或 Anthropic 格式） */
+  createLangChainModel(): ChatOpenAI | ChatAnthropic {
     const cfg = this.getLLMConfig()
+
+    if (cfg.format === 'anthropic') {
+      return new ChatAnthropic({
+        model: cfg.model,
+        apiKey: cfg.apiKey,
+        anthropicApiUrl: cfg.baseURL,  // 根 URL，ChatAnthropic 内部自动加 /v1/messages
+        maxTokens: config.ai.maxTokens,
+        temperature: 0.7,
+      })
+    }
+
     return new ChatOpenAI({
       model: cfg.model,
       apiKey: cfg.apiKey,
       configuration: { baseURL: cfg.baseURL + '/v1' },
       maxTokens: config.ai.maxTokens,
       temperature: 0.7,
+      modelKwargs: { tool_choice: 'auto' },
     })
   }
 
@@ -181,6 +194,38 @@ class ProviderManager {
   }
 
   /**
+   * Anthropic 格式流式调用（直接用 SDK，不走 LangChain）
+   * 适用于 Anthropic 兼容格式的 LLM（如小米 MiMo）
+   */
+  async *chatStreamAnthropic(
+    messages: Array<{ role: string; content: string }>,
+    opts: { system?: string } = {}
+  ): AsyncGenerator<string> {
+    const cfg = this.getLLMConfig()
+    const client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
+
+    const anthropicMessages = messages.map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    const stream = await client.messages.stream({
+      model: cfg.model,
+      max_tokens: config.ai.maxTokens,
+      temperature: 0.7,
+      ...(opts.system ? { system: opts.system } : {}),
+      messages: anthropicMessages,
+    })
+
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta') {
+        const text = (event.delta as any)?.text
+        if (text) yield text
+      }
+    }
+  }
+
+  /**
    * 单次文本补全（非流式），自动适配 OpenAI / Anthropic 格式
    * 用于 RAG 重写、重排、摘要等内部调用
    */
@@ -226,14 +271,20 @@ class ProviderManager {
   //  图片生成
   // ═══════════════════════════════════════════════
 
-  async generateImage(prompt: string, size?: string): Promise<string> {
+  async generateImage(prompt: string, size?: string, initImage?: string): Promise<string> {
     const cfg = this.getImageConfig()
+
+    const buildBody = (base?: Record<string, any>) => {
+      const body: Record<string, any> = { ...base, prompt, stream: false }
+      if (initImage) body.image = initImage
+      return body
+    }
 
     // 有请求模板时用自定义 body
     if (cfg.requestTemplate) {
       try {
         const base = JSON.parse(cfg.requestTemplate)
-        const body = { ...base, prompt, stream: false }
+        const body = buildBody(base)
         const resp = await fetch(`${cfg.baseURL}/api/v3/images/generations`, {
           method: 'POST',
           headers: {
@@ -255,21 +306,20 @@ class ProviderManager {
     }
 
     // 默认格式（火山引擎 Seedream）
+    const body = buildBody({
+      model: cfg.model,
+      size: size || cfg.defaultSize,
+      sequential_image_generation: 'disabled',
+      response_format: 'url',
+      watermark: true,
+    })
     const resp = await fetch(`${cfg.baseURL}/api/v3/images/generations`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${cfg.apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: cfg.model,
-        prompt,
-        size: size || cfg.defaultSize,
-        sequential_image_generation: 'disabled',
-        response_format: 'url',
-        stream: false,
-        watermark: true,
-      }),
+      body: JSON.stringify(body),
     })
     if (!resp.ok) {
       const err = await resp.text().catch(() => '')

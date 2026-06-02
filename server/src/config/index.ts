@@ -150,7 +150,8 @@ const config = {
   },
 
   context: {
-    maxChars: 30000
+    maxChars: 30000,
+    recentRounds: 5,         // 分层压缩：保留最近 N 轮完整对话
   },
 
   // ── 以下配置保持不变 ──
@@ -158,10 +159,11 @@ const config = {
     chunkSize: 300,
     chunkOverlap: 100,
     topK: 5,
-    retrievalTopK: 20,
+    retrievalTopK: 50,
     similarityThreshold: 0.5,
     enableQueryRewrite: true,
     queryRewriteMinLen: 15,
+    enableLLMQueryRewrite: false,  // true=LLM 改写（费 token），false=仅规则去指代词
     enableHybridSearch: true,
     vectorWeight: 0.7,
     bm25Weight: 0.3,

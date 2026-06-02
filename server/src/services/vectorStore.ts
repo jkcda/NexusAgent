@@ -20,6 +20,39 @@ export async function getLanceConnection(): Promise<Connection> {
   return _connection
 }
 
+// ── 索引建立 ──
+
+async function ensureKBIndices(table: Table) {
+  try {
+    await table.createIndex('vector')
+    console.log(`[VectorStore] IVF_PQ 向量索引已建立: ${table.name}`)
+  } catch (e: any) {
+    if (!e.message?.includes('already exists')) {
+      console.warn(`[VectorStore] 向量索引建立跳过: ${e.message || e}`)
+    }
+  }
+
+  const scalarCols = ['doc_id', 'chunk_index', 'kb_id']
+  for (const col of scalarCols) {
+    try {
+      await table.createIndex(col)
+    } catch {
+      // 列不存在或索引已存在，跳过
+    }
+  }
+}
+
+async function ensureMemoryIndices(table: Table) {
+  try {
+    await table.createIndex('vector')
+  } catch {}
+
+  try {
+    await table.createIndex('session_id')
+  } catch {}
+}
+// ── 表管理 ──
+
 export async function getVectorStore(tableName: string): Promise<LanceDB> {
   const embeddings = getEmbeddings()
   const conn = await getLanceConnection()
@@ -30,13 +63,12 @@ export async function getVectorStore(tableName: string): Promise<LanceDB> {
     return new LanceDB(embeddings, { table })
   }
 
-  // 创建空表（维度从 embedding 模型配置读取，默认 768 = bge-base-zh-v1.5）
   const dim = config.embeddings.dimension || 768
   const table = await conn.createTable(tableName, [
     { vector: Array(dim).fill(0), text: '', doc_id: 0, kb_id: 0, filename: '', chunk_index: 0 }
   ])
-  // 删除初始占位行
   await table.delete('doc_id = 0')
+  ensureKBIndices(table) // 异步建索引，不阻塞
   return new LanceDB(embeddings, { table })
 }
 
@@ -44,10 +76,6 @@ export async function createVectorStore(tableName: string): Promise<LanceDB> {
   return getVectorStore(tableName)
 }
 
-/**
- * 通用建表/打开表（供 memoryService 等非KB场景使用）
- * 返回原生 LanceDB Table，不含 LangChain 包装
- */
 export async function getOrCreateTable(tableName: string, dimension?: number): Promise<Table> {
   const dim = dimension || config.embeddings.dimension || 768
   const conn = await getLanceConnection()
@@ -61,13 +89,12 @@ export async function getOrCreateTable(tableName: string, dimension?: number): P
     { vector: Array(dim).fill(0), text: '', session_id: '', created_at: '' }
   ])
   await table.delete("session_id = ''")
+  ensureMemoryIndices(table)
   return table
 }
 
-/**
- * 原生向量搜索（不依赖 LangChain 包装）
- * 接收已嵌入的查询向量，返回原始结果数组
- */
+// ── 搜索 ──
+
 export async function searchInTable(
   tableName: string,
   queryVector: number[],
@@ -78,7 +105,7 @@ export async function searchInTable(
   if (!tableNames.includes(tableName)) return []
 
   const table = await conn.openTable(tableName)
-  return table.search(queryVector).limit(limit).toArray()
+  return table.search(queryVector).limit(limit).nprobes(10).refineFactor(2).toArray()
 }
 
 export async function addDocuments(
@@ -94,15 +121,16 @@ export async function similaritySearch(
   query: string,
   k: number = config.rag.topK
 ): Promise<[Document, number][]> {
-  // 绕过 LangChain 的 broken similaritySearchWithScore（LanceDB 0.27 返回 _distance 而非 score）
   const embeddings = getEmbeddings()
   const conn = await getLanceConnection()
   const tableNames = await conn.tableNames()
   if (!tableNames.includes(tableName)) return []
 
   const queryVector = await embeddings.embedQuery(query)
+  const queryNorm = Math.sqrt(queryVector.reduce((s, x) => s + x * x, 0))
+
   const table = await conn.openTable(tableName)
-  const raw = await table.search(queryVector).limit(k).toArray()
+  const raw = await table.search(queryVector).limit(k).nprobes(10).refineFactor(2).toArray()
 
   return raw.map((item: any) => {
     const metadata: Record<string, any> = {}
@@ -111,11 +139,20 @@ export async function similaritySearch(
         metadata[key] = item[key]
       }
     }
-    const distance = item._distance ?? 1
-    const score = 1 - Math.min(distance, 1)
+    let score = 0
+    const vec = item.vector as number[] | undefined
+    if (vec && queryNorm > 0) {
+      const vecNorm = Math.sqrt(Array.from(vec).reduce((s: number, x: number) => s + x * x, 0))
+      if (vecNorm > 0) {
+        const dot = Array.from(vec).reduce((s: number, x: number, i: number) => s + x * queryVector[i], 0)
+        score = (dot / (queryNorm * vecNorm) + 1) / 2
+      }
+    }
     return [new Document({ pageContent: item.text || '', metadata }), score]
   })
 }
+
+// ── 清理 ──
 
 export async function deleteVectorStore(tableName: string): Promise<void> {
   const conn = await getLanceConnection()

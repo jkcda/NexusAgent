@@ -10,6 +10,8 @@
 |------|------|
 | 后端 | Node.js + Express 5 + TypeScript |
 | 前端 | Vue 3 + Vite + Pinia + Element Plus |
+| 桌面端 | Electron + Vue 3 + Vite |
+| 企业版 | Vue 3 + Vite + Element Plus |
 | 小程序 | uni-app |
 | 数据库 | MySQL + Redis（可选） |
 | 向量存储 | LanceDB（本地嵌入式） |
@@ -44,9 +46,19 @@ aiconnent/
 │       ├── stores/            # Pinia 状态管理
 │       ├── apis/              # API 调用封装
 │       └── utils/             # SSE、Socket.IO、语音工具
-├── client-miniapp/            # 小程序/App uni-app
-└── docs/                      # 开发文档
+├── client-desktop/            # 桌面端 Electron + Vue
+├── client-enterprise/         # 企业版前端 Vue 3 + Vite
+└── client-miniapp/            # 小程序/App uni-app
 ```
+
+### 客户端说明
+
+| 客户端 | 技术栈 | 用途 |
+|--------|--------|------|
+| `client/` | Vue 3 + Vite + Element Plus | 标准 Web 端，面向普通用户，包含完整功能 |
+| `client-desktop/` | Electron + Vue 3 | 桌面应用，支持本地文件系统访问（MCP） |
+| `client-enterprise/` | Vue 3 + Vite + Element Plus | 企业版，简化界面，专注核心对话功能 |
+| `client-miniapp/` | uni-app | 微信小程序，轻量化访问入口 |
 
 ---
 
@@ -305,8 +317,8 @@ npm run dev                   # http://localhost:5173
 
 **Vite 代理配置** (`client/vite.config.ts`)：
 - 前端开发服务器 `localhost:5173`
-- `/api` 请求自动代理到 `localhost:3000`
-- `/socket.io` WebSocket 自动代理到 `localhost:3000`
+- `/api` 请求自动代理到 `localhost:3000`（含 SSE 流式请求头配置）
+- `/uploads` 文件访问代理到 `localhost:3000`
 - 零跨域问题，本地开发无需配置 Nginx
 
 ### 服务器部署
@@ -496,24 +508,46 @@ CREATE DATABASE ai_chat CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```env
 # server/.env 生产配置示例
 DB_HOST=127.0.0.1
+DB_PORT=3306
 DB_USER=nexus
 DB_PASSWORD=安全的数据库密码
 DB_NAME=ai_chat
 
+# MCP 文件系统根目录
+MCP_FS_DIR=/www/wwwroot/aiconnent
+
 JWT_SECRET=替换为随机字符串
 
 # AI 能力（管理页面可覆盖）
-DASHSCOPE_API_KEY=sk-xxx
-ARK_API_KEY=xxx
+DASHSCOPE_API_KEY=ms-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ARK_API_KEY=ark-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxxx
+ARK_BASE_URL=https://ark.cn-beijing.volces.com
 
 # 可选
+TAVILY_API_KEY=tvly-dev-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
-TAVILY_API_KEY=xxx
+REDIS_PASSWORD=
+REDIS_DB=0
+
+# 邮箱配置
+EMAIL_USER=your_qq@qq.com
+EMAIL_PASS=your_qq_smtp_auth_code
 
 # 生产环境
 CLIENT_URL=https://your-domain.com
 CORS_ORIGINS=https://your-domain.com
+
+# 视频处理配置
+VIDEO_FPS=2
+VIDEO_MAX_DURATION=1800
+
+# WebSocket 端口
+WS_PORT=3001
+
+# 微信小程序配置（可选）
+WECHAT_APPID=your_wechat_appid
+WECHAT_SECRET=your_wechat_secret
 ```
 
 ---
@@ -533,41 +567,77 @@ CORS_ORIGINS=https://your-domain.com
 ## 环境变量
 
 ```env
-# 数据库
+# MySQL 数据库配置
 DB_HOST=localhost
+DB_PORT=3306
 DB_USER=root
-DB_PASSWORD=
-DB_NAME=ai_chat
+DB_PASSWORD=your_password
+DB_NAME=project
 
-# JWT
-JWT_SECRET=your-secret-key
+# MCP 文件系统根目录（默认 ./workspace）
+MCP_FS_DIR=/www/wwwroot/aiconnent
 
-# LLM 默认配置（首次未保存能力配置时 fallback）
-DASHSCOPE_API_KEY=sk-xxx
-ARK_API_KEY=xxx
+# JWT 配置
+JWT_SECRET=your_secret_key_here
 
-# 邮箱（注册验证码）
-EMAIL_USER=xxx@qq.com
-EMAIL_PASS=xxx
+# ── AI 能力配置 ──
+# 系统围绕「大语言模型」和「图片生成」两个核心能力组织。
+# 用户可在前端「能力配置」页面自由选择供应商、API Key、接口格式和模型。
+# 以下环境变量仅作为首次使用前的默认 fallback，保存后走数据库 system_settings。
 
-# 可选
-TAVILY_API_KEY=xxx
+# 大语言模型默认 API Key（ModelScope / OpenAI / Anthropic 等，用户可更换）
+DASHSCOPE_API_KEY=ms-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 图片生成默认 API Key（火山引擎 ARK / OpenAI DALL-E 等，用户可更换）
+ARK_API_KEY=ark-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxxx
+ARK_BASE_URL=https://ark.cn-beijing.volces.com
+
+# 联网搜索（Tavily，可选，不配自动降级 DuckDuckGo）
+TAVILY_API_KEY=tvly-dev-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Redis 缓存配置（可选，不配则 RAG/记忆不缓存）
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+
+# QQ 邮箱 SMTP（发送验证邮件）
+EMAIL_USER=your_qq@qq.com
+EMAIL_PASS=your_qq_smtp_auth_code
+
+# 前端访问地址（用于邮件中的验证链接）
 CLIENT_URL=http://localhost:5173
+
+# 视频帧提取频率（每秒提取帧数，越大越密集，默认 2）
+VIDEO_FPS=2
+
+# 视频最大时长（秒，超过截断，默认 1800）
+VIDEO_MAX_DURATION=1800
+
+# WebSocket 端口（小程序专用，默认 3001）
 WS_PORT=3001
+
+# CORS 跨域白名单，逗号分隔
+CORS_ORIGINS=http://localhost:5173
+
+# 微信小程序配置（可选）
+WECHAT_APPID=your_wechat_appid
+WECHAT_SECRET=your_wechat_secret
 ```
 
 ## API 概览
 
 | 模块 | 前缀 | 关键端点 |
 |------|------|----------|
-| AI 对话 | `/api/ai` | `POST /chat`（SSE 流式）、`GET /sessions`、`GET /history` |
-| AI 生图 | `/api/ai` | `POST /image` |
-| 用户 | `/api/user` | `POST /register`、`POST /login`、`GET /info` |
-| 知识库 | `/api/kb` | CRUD + `POST /:id/documents` + `POST /:id/search` |
+| AI 对话 | `/api/ai` | `POST /chat`（SSE 流式）、`GET /sessions`、`GET /history`、`DELETE /history`、`GET /models`、`GET /guest-status`、`GET /context-stats`、`POST /feedback` |
+| AI 生图 | `/api/ai` | `POST /image`（文生图/图生图） |
+| 用户 | `/api/user` | `POST /register`、`POST /login`、`GET /info`、`POST /verify-email`、`POST /wx-login` |
+| 知识库 | `/api/kb` | CRUD + `POST /:kbId/documents` + `POST /:kbId/search` + `GET /:kbId/documents/:docId/preview` + `POST /search`（多库联合检索） |
 | 角色 | `/api/agents` | CRUD |
 | 聊天室 | `/api/rooms` | CRUD + 加入/发现 |
-| 语音 | `/api/voice` | `/transcribe`、`/tts` |
-| 管理后台 | `/api/admin` | 用户管理、对话统计、能力配置 |
+| 语音 | `/api/voice` | `/transcribe`（语音转写）、`/tts`（语音合成） |
+| 管理后台 | `/api/admin` | 用户管理、对话统计、能力配置、API Key 管理 |
 | 上传 | `/api` | `/upload`、`/upload/avatar` |
+| 桌面端 | `/api/desktop` | 桌面应用专属接口 |
+| 文件系统 | `/api/fs` | MCP 文件操作 |
+| MCP | `/api/mcp` | Playwright 浏览器自动化 |

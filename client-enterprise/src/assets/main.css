@@ -1,0 +1,43 @@
+/* 企业级 RAG 系统全局样式 */
+:root {
+  --sidebar-width: 220px;
+  --header-height: 56px;
+  --color-bg-page: #f0f2f5;
+  --color-bg-white: #ffffff;
+  --color-bg-sidebar: #001529;
+  --color-bg-sidebar-hover: #1890ff;
+  --color-text-sidebar: rgba(255, 255, 255, 0.65);
+  --color-text-sidebar-active: #ffffff;
+  --color-border-light: #e8e8e8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--color-bg-page);
+  color: #333;
+}
+
+#app {
+  height: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

@@ -45,6 +45,73 @@ export async function parseDocument(filePath: string, mimeType: string): Promise
   }
 }
 
+// HTML 富预览（DOCX → mammoth HTML，XLSX → HTML 表格，PPTX → 格式化 HTML）
+export async function parseDocumentPreview(filePath: string, mimeType: string): Promise<{ content: string; format: 'html' | 'text' }> {
+  const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
+
+  switch (mimeType) {
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      try {
+        const mammoth = (await import('mammoth')).default
+        const result = await mammoth.convertToHtml({ path: absolutePath })
+        return { content: result.value || '<p>（文档无内容）</p>', format: 'html' }
+      } catch (e: any) {
+        console.error('[DOCX] HTML 预览失败:', absolutePath, e.message || e)
+        const text = await parseDocument(filePath, mimeType)
+        return { content: text, format: 'text' }
+      }
+
+    case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      try {
+        const XLSX = (await import('xlsx')).default
+        const workbook = XLSX.readFile(absolutePath)
+        const parts: string[] = []
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName]
+          const html = XLSX.utils.sheet_to_html(sheet)
+          if (html.trim()) {
+            parts.push(`<h3 style="margin:12px 0 6px;font-size:14px;color:#333">${sheetName}</h3>${html}`)
+          }
+        }
+        return { content: parts.join('\n') || '<p>（表格无内容）</p>', format: 'html' }
+      } catch (e: any) {
+        console.error('[XLSX] HTML 预览失败:', absolutePath, e.message || e)
+        const text = await parseDocument(filePath, mimeType)
+        return { content: text, format: 'text' }
+      }
+
+    case 'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+      try {
+        const JSZip = (await import('jszip')).default
+        const pptxBuf = fs.readFileSync(absolutePath)
+        const zip = await JSZip.loadAsync(pptxBuf)
+        const slideFiles = Object.keys(zip.files)
+          .filter(name => /^ppt\/slides\/slide\d+\.xml$/i.test(name))
+          .sort()
+        const parts: string[] = []
+        for (let i = 0; i < slideFiles.length; i++) {
+          const xml = await zip.files[slideFiles[i]].async('string')
+          const texts = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g)
+            ?.map(t => t.replace(/<\/?a:t[^>]*>/g, ''))
+            .filter(t => t.trim())
+            .join(' ') || ''
+          if (texts.trim()) {
+            parts.push(`<h3 style="margin:12px 0 6px;font-size:14px;color:#333">幻灯片 ${i + 1}</h3><p style="margin:0 0 12px;line-height:1.7;color:#555">${texts}</p>`)
+          }
+        }
+        return { content: parts.join('\n') || '<p>（演示文稿无文本内容）</p>', format: 'html' }
+      } catch (e: any) {
+        console.error('[PPTX] HTML 预览失败:', absolutePath, e.message || e)
+        const text = await parseDocument(filePath, mimeType)
+        return { content: text, format: 'text' }
+      }
+
+    default:
+      const text = await parseDocument(filePath, mimeType)
+      return { content: text, format: 'text' }
+  }
+}
+
 // 获取文本分割器
 function getSplitter(): RecursiveCharacterTextSplitter {
   return new RecursiveCharacterTextSplitter({

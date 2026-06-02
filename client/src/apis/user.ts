@@ -24,3 +24,21 @@ export const verifyEmail = (data: { email: string; code: string }) => {
 export const logout = () => {
   return request.post('/user/logout')
 }
+
+// 上传用户头像
+export const uploadAvatar = async (file: File): Promise<string> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const baseURL = (import.meta.env as any).VITE_BASE_URL || ''
+  const token = localStorage.getItem('token')
+  const response = await fetch(`${baseURL}/api/upload/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData
+  })
+  const data = await response.json()
+  if (!data.success) {
+    throw new Error(data.message || '头像上传失败')
+  }
+  return data.result.url
+}

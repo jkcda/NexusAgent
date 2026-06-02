@@ -1,4 +1,5 @@
 import request from '@/utils/http'
+import { resizeImageIfNeeded } from '@/utils/image'
 
 interface UploadResult {
   name: string
@@ -21,6 +22,7 @@ export const chatWithAI = (data: {
   kbId?: number
   model?: string
   agentId?: number | null
+  initImage?: string
 }) => {
   return request.post('/ai/chat', data)
 }
@@ -40,10 +42,21 @@ export const clearUserMemories = (userId: number) => {
   return request.delete(`/ai/memory?userId=${userId}`)
 }
 
-// 上传文件
+// 提交对话反馈（点赞/点踩）
+export const submitFeedback = (data: {
+  sessionId: string
+  messageIndex: number
+  rating: 'up' | 'down'
+  comment?: string
+}) => {
+  return request.post('/ai/feedback', data)
+}
+
+// 上传文件（图片自动缩放到 4k 以内）
 export const uploadFile = async (file: File): Promise<UploadResult> => {
+  const resized = await resizeImageIfNeeded(file)
   const formData = new FormData()
-  formData.append('file', file)
+  formData.append('file', resized)
   const baseURL = (import.meta.env as any).VITE_BASE_URL || ''
   const response = await fetch(`${baseURL}/api/upload`, {
     method: 'POST',

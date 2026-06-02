@@ -7,6 +7,8 @@ import type { Document } from '@langchain/core/documents'
 import type { HybridCandidate } from './hybridSearch.js'
 import type { SearchResult } from './knowledgeBase.js'
 import { providerManager } from '../providers/index.js'
+import { rerankLocally } from './reranker.js'
+import type { RerankCandidate } from './reranker.js'
 
 export interface RetrievedChunk {
   content: string
@@ -24,6 +26,7 @@ export interface RAGContext {
 // ============================================================
 
 const PRONOUN_PATTERN = /它|这个|那个|这些|那些|他|她|他们|她们|这|那|其|该/
+const SHORT_QUERY_THRESHOLD = 6 // 极短查询尝试补全
 
 function needsRewrite(query: string): boolean {
   if (!config.rag.enableQueryRewrite) return false
@@ -33,6 +36,12 @@ function needsRewrite(query: string): boolean {
 
 async function rewriteQuery(query: string, context?: string): Promise<string> {
   if (!needsRewrite(query)) return query
+
+  // LLM 改写被关闭时，规则处理即可
+  if (!config.rag.enableLLMQueryRewrite) {
+    const trimmed = query.replace(PRONOUN_PATTERN, '').trim()
+    return trimmed.length >= SHORT_QUERY_THRESHOLD ? trimmed : query
+  }
 
   try {
     const contextBlock = context
@@ -173,21 +182,14 @@ async function expandToContextWindow(
 }
 
 // ============================================================
-// 阶段 3：LLM 重排序
+// 阶段 3：重排序（本地 Reranker 优先，LLM 兜底）
 // ============================================================
-
-interface RankCandidate {
-  content: string
-  source: string
-  score: number
-  index: number
-}
 
 async function rerankWithLLM(
   query: string,
-  candidates: RankCandidate[],
+  candidates: RerankCandidate[],
   topK: number
-): Promise<RankCandidate[]> {
+): Promise<RerankCandidate[]> {
   if (candidates.length <= topK) return candidates
   if (!config.rag.enableRerank) return candidates.slice(0, topK)
 
@@ -220,6 +222,22 @@ ${items}
     }
   } catch (err: any) {
     console.warn(`[RAG] 重排序失败: ${err.message}`)
+  }
+
+  return candidates.slice(0, topK)
+}
+
+async function rerankCandidates(
+  query: string,
+  candidates: RerankCandidate[],
+  topK: number
+): Promise<RerankCandidate[]> {
+  if (candidates.length === 0) return []
+
+  if (config.rag.enableRerank && candidates.length > topK) {
+    const localResult = await rerankLocally(query, candidates, topK)
+    if (localResult) return localResult
+    return rerankWithLLM(query, candidates, topK)
   }
 
   return candidates.slice(0, topK)
@@ -435,14 +453,14 @@ export async function retrieveFromKB(
     expandedResults = fusedResults
   }
 
-  // 阶段 3：LLM 重排序
-  const rankCandidates: RankCandidate[] = expandedResults.map((r, i) => ({
+  // 阶段 3：重排序（本地 Reranker 优先，LLM 兜底）
+  const rankCandidates: RerankCandidate[] = expandedResults.map((r, i) => ({
     content: r.content,
     source: r.source,
     score: r.fusedScore,
     index: i
   }))
-  const reranked = await rerankWithLLM(rewrittenQuery, rankCandidates, topK)
+  const reranked = await rerankCandidates(rewrittenQuery, rankCandidates, topK)
 
   const chunks: RetrievedChunk[] = reranked.map(r => ({
     content: r.content,
@@ -458,6 +476,71 @@ export async function retrieveFromKB(
   if (sessionId) sessionRetrievalCache.set(sessionId, result)
 
   return result
+}
+
+// ============================================================
+// 多知识库联合检索
+// ============================================================
+
+export async function searchAcrossKBs(
+  query: string,
+  kbIds: number[],
+  topK: number = config.rag.topK
+): Promise<RAGContext> {
+  if (kbIds.length === 0) return { chunks: [], promptAddition: '' }
+
+  // 并行检索所有知识库
+  const allResults = await Promise.all(
+    kbIds.map(async (kbId) => {
+      try {
+        const results = await searchInKB(kbId, query, config.rag.retrievalTopK)
+        return results.map(r => ({ ...r, kbId }))
+      } catch {
+        return []
+      }
+    })
+  )
+
+  const flat = allResults.flat()
+  if (flat.length === 0) return { chunks: [], promptAddition: '' }
+
+  console.log(`[RAG] 多库联合检索: ${kbIds.length}个KB → ${flat.length}条原始结果`)
+
+  // 混合检索 + 重排序（与单库管线一致，但少了 Small-to-Big）
+  let fused: (HybridCandidate & { fusedScore: number })[]
+
+  if (config.rag.enableHybridSearch && flat.length > 1) {
+    const fuseOutput = hybridFuse(query, flat, config.rag.rerankTopK)
+    fused = fuseOutput.map(f => ({
+      content: f.content,
+      source: f.source,
+      score: f.vectorScore,
+      fusedScore: f.fusedScore
+    }))
+  } else {
+    fused = flat.map(r => ({
+      content: r.content,
+      source: r.source,
+      score: r.score,
+      fusedScore: r.score
+    }))
+  }
+
+  const candidates: RerankCandidate[] = fused.map((r, i) => ({
+    content: r.content,
+    source: r.source,
+    score: r.fusedScore,
+    index: i
+  }))
+
+  const reranked = await rerankCandidates(query, candidates, topK)
+  const chunks: RetrievedChunk[] = reranked.map(r => ({
+    content: r.content,
+    source: r.source,
+    score: r.score
+  }))
+
+  return { chunks, promptAddition: formatChunksForPrompt(chunks) }
 }
 
 export async function retrieveFromFileChunks(

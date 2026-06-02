@@ -118,6 +118,44 @@ export class ChatHistoryModel {
     return rows as ChatHistory[]
   }
 
+  // Dashboard 聚合统计
+  static async getDashboardStats(): Promise<{
+    userCount: number
+    kbCount: number
+    docCount: number
+    chunkCount: number
+    todaySessions: number
+    todayMessages: number
+    totalSessions: number
+    totalMessages: number
+  }> {
+    const [userRows] = await pool.execute('SELECT COUNT(*) AS cnt FROM users')
+    const [kbRows] = await pool.execute('SELECT COUNT(*) AS cnt, COALESCE(SUM(document_count),0) AS docs, COALESCE(SUM(chunk_count),0) AS chunks FROM knowledge_bases')
+    const [msgRows] = await pool.execute(
+      `SELECT
+        COUNT(DISTINCT session_id) AS totalSessions,
+        COUNT(*) AS totalMessages
+      FROM chat_history`
+    )
+    const [todayRows] = await pool.execute(
+      `SELECT
+        COUNT(DISTINCT session_id) AS todaySessions,
+        COUNT(*) AS todayMessages
+      FROM chat_history
+      WHERE DATE(created_at) = CURDATE()`
+    )
+    return {
+      userCount: Number((userRows as any[])[0].cnt),
+      kbCount: Number((kbRows as any[])[0].cnt),
+      docCount: Number((kbRows as any[])[0].docs),
+      chunkCount: Number((kbRows as any[])[0].chunks),
+      todaySessions: Number((todayRows as any[])[0].todaySessions),
+      todayMessages: Number((todayRows as any[])[0].todayMessages),
+      totalSessions: Number((msgRows as any[])[0].totalSessions),
+      totalMessages: Number((msgRows as any[])[0].totalMessages),
+    }
+  }
+
   // 获取用户的所有会话列表（含预览信息）
   static async getSessionsByUserId(userId: number | null) {
     if (userId !== null) {

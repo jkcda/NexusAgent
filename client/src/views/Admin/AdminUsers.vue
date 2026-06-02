@@ -38,6 +38,11 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="department" label="部门" min-width="120">
+          <template #default="{ row }">
+            {{ row.department || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="注册时间" width="180">
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
@@ -89,6 +94,11 @@
             <el-option label="管理员" value="admin" />
           </el-select>
         </el-form-item>
+        <el-form-item label="部门">
+          <el-select v-model="form.department" allow-create filterable clearable placeholder="选择或输入部门">
+            <el-option v-for="d in departments" :key="d" :label="d" :value="d" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -105,13 +115,14 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Plus, User } from '@element-plus/icons-vue'
-import { getUsers, createUser, updateUser, deleteUser } from '@/apis/admin'
+import { getUsers, createUser, updateUser, deleteUser, getDepartments } from '@/apis/admin'
 
 interface UserItem {
   id: number
   username: string
   email: string
   role: string
+  department?: string
   created_at: string
 }
 
@@ -124,11 +135,13 @@ const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
 
+const departments = ref<string[]>([])
 const form = ref({
   username: '',
   email: '',
   password: '',
-  role: 'user'
+  role: 'user',
+  department: ''
 })
 
 const formRules: FormRules = {
@@ -150,7 +163,7 @@ const formRules: FormRules = {
 }
 
 const resetForm = () => {
-  form.value = { username: '', email: '', password: '', role: 'user' }
+  form.value = { username: '', email: '', password: '', role: 'user', department: '' }
   editingId.value = null
   isEdit.value = false
   formRef.value?.resetFields()
@@ -168,6 +181,7 @@ const openEditDialog = (row: UserItem) => {
   form.value.username = row.username
   form.value.email = row.email
   form.value.role = row.role
+  form.value.department = row.department || ''
   dialogVisible.value = true
 }
 
@@ -196,7 +210,8 @@ const submitForm = async () => {
     const payload: any = {
       username: form.value.username,
       email: form.value.email,
-      role: form.value.role
+      role: form.value.role,
+      department: form.value.department || ''
     }
     if (form.value.password) {
       payload.password = form.value.password
@@ -265,8 +280,18 @@ const formatTime = (time: string | null) => {
   })
 }
 
+const fetchDepartments = async () => {
+  try {
+    const res = await getDepartments()
+    if (res.data.success) {
+      departments.value = res.data.result.departments || []
+    }
+  } catch { /* 静默失败 */ }
+}
+
 onMounted(() => {
   fetchUsers()
+  fetchDepartments()
 })
 </script>
 

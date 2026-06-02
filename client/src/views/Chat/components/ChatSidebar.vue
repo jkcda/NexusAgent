@@ -40,9 +40,18 @@
         <span class="nexus-level">跨宇宙魔法情报员</span>
       </div>
     </div>
+    <div class="session-search">
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索会话..."
+        size="small"
+        clearable
+        :prefix-icon="Search"
+      />
+    </div>
     <div class="session-list">
       <div
-        v-for="sess in sessionList"
+        v-for="sess in filteredSessions"
         :key="sess.id"
         :class="['session-item', { active: sess.id === currentSessionId }]"
         @click="$emit('selectSession', sess.id)"
@@ -105,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Delete, ArrowRight } from '@element-plus/icons-vue'
+import { Plus, Delete, ArrowRight, Search } from '@element-plus/icons-vue'
 import { ref, computed, onMounted } from 'vue'
 
 interface SessionItem {
@@ -134,6 +143,16 @@ interface AgentItem {
 }
 
 const welcomeLine = computed(() => '✦ 指挥官，数据之海已同步。开始新的对话吧。')
+
+const searchQuery = ref('')
+const filteredSessions = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return props.sessionList
+  return props.sessionList.filter(s =>
+    (s.preview || '新对话').toLowerCase().includes(q) ||
+    (s.agentName || '').toLowerCase().includes(q)
+  )
+})
 
 // MCP state
 const mcpExpanded = ref(false)
@@ -319,6 +338,14 @@ function onSelectAgent(agent: AgentItem | null) {
 .nexus-level {
   font-size: 11px;
   color: var(--color-text-muted);
+}
+
+.session-search {
+  padding: 8px 12px 4px;
+}
+
+.session-search :deep(.el-input__wrapper) {
+  background: var(--color-bg-input);
 }
 
 .session-list {

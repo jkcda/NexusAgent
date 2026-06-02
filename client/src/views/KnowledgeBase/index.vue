@@ -84,6 +84,9 @@ const loadKBList = async () => {
     const res = await getKnowledgeBases()
     if (res.data.success) {
       kbList.value = res.data.result.knowledgeBases || []
+      if (kbList.value.length > 0 && !selectedKbId.value) {
+        selectKB(kbList.value[0])
+      }
     }
   } catch {
     ElMessage.error('获取知识库列表失败')

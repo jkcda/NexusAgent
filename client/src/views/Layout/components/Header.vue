@@ -37,6 +37,21 @@
 
     <div class="header-user">
       <div v-if="userInfo" class="user-info">
+        <el-avatar
+          class="user-avatar"
+          :size="32"
+          :src="avatarUrl"
+          @click="triggerAvatarUpload"
+        >
+          {{ userInfo.username?.charAt(0) || '用' }}
+        </el-avatar>
+        <input
+          ref="avatarInput"
+          type="file"
+          accept="image/*"
+          style="display: none"
+          @change="handleAvatarChange"
+        />
         <span class="username">{{ userInfo.username }}</span>
         <el-button
           type="danger"
@@ -62,7 +77,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Menu, Close } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/userStore'
-import { logout } from '@/apis/user'
+import { logout, uploadAvatar } from '@/apis/user'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -73,6 +88,37 @@ const isAdmin = ref(false)
 const mobileMenuOpen = ref(false)
 const isGuestPage = computed(() => !userInfo.value && route.path === '/chat')
 const logoExists = ref(true)
+const avatarInput = ref<HTMLInputElement | null>(null)
+
+const avatarUrl = computed(() => {
+  const info = userStore.getUserInfo()
+  if (info?.avatar) {
+    const baseURL = (import.meta.env as any).VITE_BASE_URL || ''
+    return baseURL + info.avatar
+  }
+  return ''
+})
+
+function triggerAvatarUpload() {
+  avatarInput.value?.click()
+}
+
+async function handleAvatarChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  try {
+    const avatar = await uploadAvatar(file)
+    const userInfoData = userStore.getUserInfo()
+    userStore.setUserInfo({ ...userInfoData, avatar })
+    ElMessage.success('头像上传成功')
+  } catch (error: any) {
+    ElMessage.error(error.message || '头像上传失败')
+  }
+
+  target.value = ''
+}
 
 const onLogoError = () => {
   logoExists.value = false
@@ -225,6 +271,16 @@ onMounted(() => {
   padding: 4px 12px;
   border-radius: 12px;
   border: 1px solid rgba(212, 175, 55, 0.3);
+}
+
+.user-avatar {
+  cursor: pointer;
+  transition: opacity 0.2s;
+  border: 1px solid var(--color-border);
+}
+
+.user-avatar:hover {
+  opacity: 0.8;
 }
 
 .mobile-menu-btn {

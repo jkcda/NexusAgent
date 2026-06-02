@@ -27,7 +27,11 @@
       :typingMessageIndex="typingMessageIndex"
       :currentSessionId="currentSessionId"
       :kbList="kbList"
-      :selectedKbId="selectedKbId"
+      :selectedKbIds="selectedKbIds"
+      :forceKbRetrieval="forceKbRetrieval"
+      :webSearchEnabled="webSearchEnabled"
+      :userAvatarUrl="userAvatarUrl"
+      :contextPercent="contextPercent"
       :modelList="modelList"
       :selectedModel="selectedModel"
       :imageRatios="imageRatios"
@@ -40,8 +44,11 @@
       @createSessionWithAgent="createNewSessionWithAgent"
       @send="sendMessage"
       @clearHistory="clearHistory"
-      @update:selectedKbId="selectedKbId = $event"
+      @update:selectedKbIds="selectedKbIds = $event"
+      @update:forceKbRetrieval="forceKbRetrieval = $event"
+      @update:webSearchEnabled="webSearchEnabled = $event"
       @toggle-sidebar="toggleSidebar"
+      @feedback="handleFeedback"
     />
   </div>
 </template>
@@ -53,7 +60,7 @@ import { Fold } from '@element-plus/icons-vue'
 import { getChatHistory, deleteChatHistory, getSessions, uploadFile } from '@/apis/ai'
 import { getKnowledgeBases, type KnowledgeBase } from '@/apis/knowledgeBase'
 import { handleSSE } from '@/utils/sse'
-import { autoSpeakEnabled, speak } from '@/utils/tts'
+
 import { useUserStore } from '@/stores/userStore'
 import request from '@/utils/http'
 function getGreeting() {
@@ -102,7 +109,11 @@ const mobileSidebarOpen = ref(false)
 const currentSessionId = ref<string>('')
 const sessionList = ref<SessionItem[]>([])
 const kbList = ref<KnowledgeBase[]>([])
-const selectedKbId = ref<number | null>(null)
+const selectedKbIds = ref<number[]>([])
+const forceKbRetrieval = ref(false)
+const webSearchEnabled = ref(false)
+const userAvatarUrl = ref('')
+const contextPercent = ref(0)
 const selectedModel = ref<string>(localStorage.getItem('nexusSelectedModel') || '')
 const modelList = ref<{ id: string; name: string; type: string; desc: string }[]>([])
 const imageRatios = ref<{ label: string; value: string }[]>([])
@@ -132,7 +143,10 @@ const switchSessionAndClose = (sessionId: string) => {
   mobileSidebarOpen.value = false
 }
 
-let typewriterTimer: ReturnType<typeof setInterval> | null = null
+let typewriterRafId = 0
+let typewriterFullContent = ''
+let typewriterTypedLen = 0
+let typewriterMsgIndex = -1
 const typingMessageIndex = ref(-1)
 
 const userStore = useUserStore()
@@ -283,7 +297,7 @@ const createNewSession = () => {
 
 const switchSession = async (sessionId: string, saveCurrent = true) => {
   if (sessionId === currentSessionId.value) return
-  stopTypewriter()
+  stopTyping()
 
   if (saveCurrent) {
     localStorage.setItem(getCurrentKey(), sessionId)
@@ -293,6 +307,7 @@ const switchSession = async (sessionId: string, saveCurrent = true) => {
   isLoading.value = false
 
   await loadHistory()
+  loadContextStats()
 }
 
 const deleteSession = async (sessionId: string) => {
@@ -385,50 +400,59 @@ const refreshSessionMeta = async () => {
   }
 }
 
-const startTypewriter = (msgIndex: number) => {
-  stopTypewriter()
+function startTyping(msgIndex: number) {
+  stopTyping()
+  typewriterMsgIndex = msgIndex
   typingMessageIndex.value = msgIndex
-
-  let fullContent = ''
-  let typedLength = 0
+  typewriterFullContent = ''
+  typewriterTypedLen = 0
 
   const tick = () => {
-    if (typingMessageIndex.value !== msgIndex) return
-    const remaining = fullContent.length - typedLength
-    if (remaining <= 0) return
+    if (typewriterMsgIndex !== msgIndex) return
+    const remaining = typewriterFullContent.length - typewriterTypedLen
+    if (remaining <= 0) {
+      typewriterRafId = requestAnimationFrame(tick)
+      return
+    }
 
-    let charsPerTick = 2 + Math.floor(Math.random() * 4)
-    if (remaining > 200) charsPerTick = 8
-    else if (remaining < charsPerTick) charsPerTick = remaining
+    let charsPerFrame = 1 + Math.floor(Math.random() * 3)
+    if (remaining > 300) charsPerFrame = 6
+    else if (remaining > 100) charsPerFrame = 3
+    else if (remaining < charsPerFrame) charsPerFrame = remaining
 
-    typedLength += charsPerTick
-    if (typedLength > fullContent.length) typedLength = fullContent.length
+    typewriterTypedLen += charsPerFrame
+    if (typewriterTypedLen > typewriterFullContent.length) {
+      typewriterTypedLen = typewriterFullContent.length
+    }
 
     const msg = messages.value[msgIndex]
-    if (msg) msg.content = fullContent.slice(0, typedLength)
+    if (msg) msg.content = typewriterFullContent.slice(0, typewriterTypedLen)
     messageAreaRef.value?.scrollToBottom()
+
+    typewriterRafId = requestAnimationFrame(tick)
   }
 
-  typewriterTimer = setInterval(tick, 30)
-
-  return {
-    append: (chunk: string) => { fullContent += chunk },
-    flush: () => {
-      stopTypewriter()
-      const msg = messages.value[msgIndex]
-      if (msg) msg.content = fullContent
-      typingMessageIndex.value = -1
-      messageAreaRef.value?.scrollToBottom()
-    }
-  }
+  typewriterRafId = requestAnimationFrame(tick)
 }
 
-const stopTypewriter = () => {
-  if (typewriterTimer !== null) {
-    clearInterval(typewriterTimer)
-    typewriterTimer = null
+function stopTyping() {
+  if (typewriterRafId) {
+    cancelAnimationFrame(typewriterRafId)
+    typewriterRafId = 0
   }
   typingMessageIndex.value = -1
+  typewriterMsgIndex = -1
+  typewriterFullContent = ''
+  typewriterTypedLen = 0
+}
+
+function flushTyping() {
+  if (typewriterMsgIndex >= 0) {
+    const msg = messages.value[typewriterMsgIndex]
+    if (msg) msg.content = typewriterFullContent
+  }
+  stopTyping()
+  messageAreaRef.value?.scrollToBottom()
 }
 
 function onModelChange(val: string) {
@@ -468,7 +492,7 @@ function createNewSessionWithAgent(agent: AgentItem | null) {
   sessionList.value.unshift(newSession)
   saveSessionList()
 
-  stopTypewriter()
+  stopTyping()
   currentSessionId.value = newId
   localStorage.setItem(getCurrentKey(), newId)
   messages.value = [{
@@ -536,7 +560,9 @@ const sendMessage = async (payload: { content: string; files: File[] }) => {
         sessionId: currentSessionId.value,
         userId,
         files: uploadedFiles.length > 0 ? uploadedFiles : undefined,
-        kbId: selectedKbId.value || undefined,
+        kbIds: selectedKbIds.value.length > 0 ? selectedKbIds.value : undefined,
+        forceKbRetrieval: forceKbRetrieval.value || undefined,
+        webSearchEnabled: webSearchEnabled.value || undefined,
         model: selectedModel.value || undefined,
         agentId: currentAgent.value?.id || undefined,
         maxVideoFrames: uploadedFiles.some(f => f.type.startsWith('video/')) ? 40 : undefined
@@ -547,40 +573,44 @@ const sendMessage = async (payload: { content: string; files: File[] }) => {
 
     messages.value.push({ role: 'assistant', content: '' })
     const msgIndex = messages.value.length - 1
-    let typewriter: ReturnType<typeof startTypewriter> | null = null
+    let typingStarted = false
     const pendingWebSources: any[] = []
 
     await handleSSE(
       response,
       (chunk) => {
-        if (!typewriter) typewriter = startTypewriter(msgIndex)
-        typewriter.append(chunk)
+        if (!typingStarted) {
+          typingStarted = true
+          startTyping(msgIndex)
+          loadingStage.value = 'composing'
+        }
+        typewriterFullContent += chunk
       },
       (error) => {
-        stopTypewriter()
+        stopTyping()
         ElMessage.error(error.message || '发送消息失败')
         isLoading.value = false
       },
       () => {
-        if (typewriter) {
-          typewriter.flush()
-        } else {
-          // 没有任何内容返回
-          typingMessageIndex.value = -1
-          isLoading.value = false
+        const waitFlush = () => {
+          if (typewriterTypedLen >= typewriterFullContent.length) {
+            flushTyping()
+            const lastMsg = messages.value[msgIndex]
+            if (lastMsg && pendingWebSources.length > 0) {
+              (lastMsg as any).webSources = pendingWebSources
+            }
+            isLoading.value = false
+            messageAreaRef.value?.scrollToBottom()
+            refreshSessionMeta()
+            loadContextStats()
+            return
+          }
+          if (typewriterFullContent.length - typewriterTypedLen > 50) {
+            typewriterTypedLen = Math.min(typewriterTypedLen + 20, typewriterFullContent.length)
+          }
+          requestAnimationFrame(waitFlush)
         }
-        const lastMsg = messages.value[msgIndex]
-        if (lastMsg && pendingWebSources.length > 0) {
-          (lastMsg as any).webSources = pendingWebSources
-        }
-        isLoading.value = false
-        messageAreaRef.value?.scrollToBottom()
-        refreshSessionMeta()
-        // Auto-speak
-        if (autoSpeakEnabled.value) {
-          const lastMsg = messages.value[msgIndex]
-          if (lastMsg?.content) speak(lastMsg.content)
-        }
+        requestAnimationFrame(waitFlush)
       },
       (event) => {
         if (event.type === 'webSearch' && event.sources) {
@@ -607,10 +637,40 @@ const sendMessage = async (payload: { content: string; files: File[] }) => {
       }
     )
   } catch (error: any) {
-    stopTypewriter()
+    stopTyping()
     ElMessage.error(error.message || '发送消息失败')
     isLoading.value = false
   }
+}
+
+const handleFeedback = async (data: { sessionId: string; messageIndex: number; rating: 'up' | 'down' }) => {
+  try {
+    const { submitFeedback } = await import('@/apis/ai')
+    await submitFeedback(data)
+  } catch {
+    // 静默失败，不影响用户体验
+  }
+}
+
+const loadUserAvatar = () => {
+  const userInfo = userStore.getUserInfo()
+  if (userInfo?.avatar) {
+    const baseURL = (import.meta.env as any).VITE_BASE_URL || ''
+    userAvatarUrl.value = userInfo.avatar.startsWith('http') ? userInfo.avatar : `${baseURL}${userInfo.avatar}`
+  }
+}
+
+const loadContextStats = async () => {
+  if (!currentSessionId.value) return
+  try {
+    const res = await fetch(`/api/ai/context-stats?sessionId=${encodeURIComponent(currentSessionId.value)}`)
+    const data = await res.json()
+    if (data.success && data.result) {
+      const used = data.result.totalTokens || 0
+      const budget = data.result.budget || 110000
+      contextPercent.value = Math.min(100, Math.round((used / budget) * 100))
+    }
+  } catch { /* 静默 */ }
 }
 
 const clearHistory = async () => {
@@ -656,6 +716,8 @@ onMounted(() => {
   loadKBList()
   loadModelList()
   loadAgents()
+  loadUserAvatar()
+  loadContextStats()
   window.addEventListener('resize', handleResize)
 })
 

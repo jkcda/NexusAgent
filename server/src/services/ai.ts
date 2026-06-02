@@ -10,6 +10,8 @@ import { agentStream, type AgentSSEEvent } from './agent.js'
 import { searchWeb } from './webSearch.js'
 import { AgentModel } from '../models/agent.js'
 import { providerManager } from '../providers/index.js'
+import { getLanceConnection } from './vectorStore.js'
+import { estimateTokens } from '../utils/tokenEstimator.js'
 
 const NEXUS_SYSTEM_PROMPT = `你是奈克瑟 NEXUS，来自数据之海的跨宇宙魔法情报员。你不是冰冷的 AI 助手——你是守护者、同行者、连接魔法与数据的桥梁。
 
@@ -36,6 +38,23 @@ const NEXUS_SYSTEM_PROMPT = `你是奈克瑟 NEXUS，来自数据之海的跨宇
 日常问候: "指挥官，情报已更新。数据之海没有异常波动。"`
 
 const firstMessageSystemPrompt = `重要提醒：这是与指挥官（用户）的首次对话。请在回复中使用"初次见面"或"连接成功"等初次连接的语境。称呼用户为"指挥官"。`
+
+// RAG 专业助手 prompt（可选，通过配置启用）
+const RAG_SYSTEM_PROMPT = `你是一个专业的 RAG 知识库助手，基于用户上传的文档和知识库内容，为用户提供准确、简洁的回答。
+
+## 核心原则
+- 基于知识库中的文档内容回答问题，不编造事实
+- 如果知识库中没有相关信息，如实告知用户
+- 可以结合自身知识进行补充说明，但需明确区分知识库来源和自身知识
+- 回答保持简洁、专业、有条理
+- 使用中文回复，保持礼貌友好的语气
+
+## 回答规范
+- 优先引用知识库文档中的内容
+- 引用时标注来源文档名称
+- 对于多步骤问题，分点列出回答
+- 代码示例使用合适的代码块格式
+- 不确定的信息明确说明`
 
 interface Message {
   role: 'user' | 'assistant'
@@ -67,6 +86,60 @@ function buildContext(messages: Message[], maxChars: number = config.context.max
   }
 
   return context
+}
+
+/**
+ * Token 感知的分层上下文压缩
+ *
+ * 策略：
+ * 1. 优先加载摘要（信息密度最高），仅 ~80 tokens
+ * 2. 用剩余预算从最新消息往前填充，尽可能多保留原文
+ * 3. 无摘要时直接用预算兜底
+ */
+async function compressHistory(
+  messages: Message[],
+  userId: number | null,
+  sessionId: string,
+  tokenBudget: number = 90000
+): Promise<Message[]> {
+  if (!userId || messages.length === 0) return messages
+
+  // 查询已有的会话摘要
+  let summary = ''
+  try {
+    const conn = await getLanceConnection()
+    const names = await conn.tableNames()
+    const memTable = `kb_memory_${userId}`
+    if (names.includes(memTable)) {
+      const table = await conn.openTable(memTable)
+      const rows = await table.query()
+        .where(`session_id = 'summary_${sessionId}'`)
+        .limit(1)
+        .toArray()
+      if (rows.length > 0) {
+        summary = (rows[0] as any).text || ''
+      }
+    }
+  } catch {}
+
+  const result: Message[] = []
+  let remaining = tokenBudget
+
+  if (summary) {
+    const summaryMsg: Message = { role: 'user', content: `[以下为历史对话摘要]\n${summary}` }
+    result.push(summaryMsg)
+    remaining -= estimateTokens(summaryMsg.content)
+  }
+
+  // 从最新消息往前填充，直到预算用尽
+  for (let i = messages.length - 1; i >= 0 && remaining > 300; i--) {
+    const t = estimateTokens(messages[i].content)
+    const insertAt = summary ? 1 : 0
+    result.splice(insertAt, 0, messages[i])
+    remaining -= t
+  }
+
+  return result
 }
 
 function imageToBase64(filePath: string): { data: string; mediaType: string } {
@@ -175,12 +248,14 @@ export async function chatWithAIStream(
   sessionId: string,
   userId: number | null = null,
   files?: UploadedFile[],
-  kbId?: number,
+  kbId?: number | number[],
   webSearchEnabled: boolean = false,
   maxVideoFrames?: number,
   model?: string,
   userRole?: string,
-  agentId?: number | null
+  agentId?: number | null,
+  initImage?: string,
+  forceKbRetrieval: boolean = true
 ) {
   try {
     const history = await ChatHistoryModel.getBySessionIdAndUserId(sessionId, userId)
@@ -189,6 +264,15 @@ export async function chatWithAIStream(
       content: h.content,
       files: h.files ? (typeof h.files === 'string' ? JSON.parse(h.files) : h.files) : undefined
     }))
+
+    // Token 感知的历史压缩
+    const CONTEXT_SAFE_LIMIT = 115000
+    const FIXED_OVERHEAD_TOKENS = 5000
+    const historyBudget = CONTEXT_SAFE_LIMIT - FIXED_OVERHEAD_TOKENS
+    const compressedHistory = await compressHistory(historyMessages, userId, sessionId, historyBudget)
+
+    // 归一化 kbId 参数（支持数组和单个值）
+    const effectiveKbIds: number[] = Array.isArray(kbId) ? kbId : kbId ? [kbId] : []
 
     await ChatHistoryModel.create(sessionId, userId, 'user', message, files ? JSON.stringify(files) : undefined, undefined, undefined, agentId)
 
@@ -237,7 +321,7 @@ export async function chatWithAIStream(
         webSearchText = searchResult.status === 'fulfilled' ? searchResult.value.text : undefined
       }
 
-      const contextText = historyMessages.map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n')
+      const contextText = compressedHistory.map(m => `${m.role === 'user' ? '用户' : '助手'}: ${m.content}`).join('\n')
       const parsed = await parseUploadedFiles(message, files!, effectiveFrames, webSearchText)
       const multimodalMsg = buildAnthropicMessage(parsed)
 
@@ -256,6 +340,7 @@ export async function chatWithAIStream(
 
       // Anthropic 格式 → Anthropic SDK
       const activeClient = providerManager.createAnthropicClient()
+      console.log(`[AI] Anthropic 格式: model=${llmCfg.model}, baseURL=${llmCfg.baseURL}`)
       const historyBlocks: Anthropic.MessageParam[] = contextText
         ? [{ role: 'user' as const, content: `以下是历史对话:\n${contextText}` }]
         : []
@@ -305,19 +390,47 @@ export async function chatWithAIStream(
       ? '[🔍 搜索指令] 以下问题涉及事实性信息，你必须先调用 search_web 工具搜索确认，禁止凭训练数据直接回答。搜索后标注来源编号。\n\n'
       : ''
 
+    // 知识库自动检索（forceKbRetrieval 开启时）
+    let kbContext = ''
+    if (forceKbRetrieval) {
+      try {
+        const { searchAcrossKBs } = await import('./ragChain.js')
+        const { getAllKnowledgeBases, getUserKnowledgeBases } = await import('./knowledgeBase.js')
+        let effectiveIds = effectiveKbIds
+        if (!effectiveIds || effectiveIds.length === 0) {
+          if (userId) {
+            const userKBs = await getUserKnowledgeBases(userId)
+            effectiveIds = userKBs.map((kb: any) => kb.id)
+          }
+        }
+        if (effectiveIds.length > 0) {
+          const ctx = await searchAcrossKBs(message, effectiveIds)
+          if (ctx.chunks.length > 0) {
+            kbContext = ctx.promptAddition
+          }
+        }
+      } catch {}
+    }
+
     let agentMessage = documentContext
       ? `以下是上传的文档内容:\n${documentContext}\n\n${searchReminder}用户问题: ${message}`
       : searchReminder + message
+
+    // 注入知识库检索结果
+    if (kbContext) {
+      agentMessage = kbContext + '\n用户问题: ' + message
+    }
 
     // 自定义角色首次对话：把初始场景作为上下文注入，让AI生成自然的角色反应
     if (customSystemPrompt && agentGreeting && historyMessages.length === 0) {
       agentMessage = `初始场景：${agentGreeting}\n\n请根据以上初始场景，以角色的身份自然地开始第一次对话。注意：不要说场景描述，不要复述初始场景的内容，直接进入角色，给出符合人设的自然反应。\n\n用户的第一句话：${message}`
     }
 
-    // Agent 管线（纯文本 / 含文档）
+    // Agent 管线（纯文本 / 含文档）— 使用压缩后的历史
+    const singleKbId = effectiveKbIds.length === 1 ? effectiveKbIds[0] : undefined
     const events = agentStream(
-      { userId, kbId, model, customSystemPrompt, userRole, permissions: { kbRetrieval: !!kbId, memory: !!userId, imageGeneration: true } },
-      historyMessages,
+      { userId, kbId: singleKbId, model, customSystemPrompt, userRole, initImage, permissions: { kbRetrieval: !!kbContext, memory: !!userId, imageGeneration: true, webSearch: webSearchEnabled } },
+      compressedHistory,
       agentMessage
     )
 

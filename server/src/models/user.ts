@@ -7,6 +7,8 @@ export interface User {
   password: string
   role?: 'admin' | 'user'
   email_verified?: number
+  department?: string
+  avatar?: string | null
   created_at?: Date
 }
 
@@ -39,10 +41,10 @@ export class UserModel {
   }
 
   // 管理员直接创建用户（跳过验证）
-  static async create(user: { username: string; email: string; password: string; role?: string }): Promise<number> {
+  static async create(user: { username: string; email: string; password: string; role?: string; department?: string }): Promise<number> {
     const [result] = await pool.execute(
-      'INSERT INTO users (username, email, password, role, email_verified) VALUES (?, ?, ?, ?, 1)',
-      [user.username, user.email, user.password, user.role || 'user']
+      'INSERT INTO users (username, email, password, role, email_verified, department) VALUES (?, ?, ?, ?, 1, ?)',
+      [user.username, user.email, user.password, user.role || 'user', user.department || '']
     )
     return (result as any).insertId
   }

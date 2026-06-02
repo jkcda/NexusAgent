@@ -29,6 +29,13 @@ export class KnowledgeBaseModel {
     return rows as KnowledgeBase[]
   }
 
+  static async findAll(): Promise<KnowledgeBase[]> {
+    const [rows] = await pool.execute(
+      'SELECT * FROM knowledge_bases ORDER BY updated_at DESC'
+    )
+    return rows as KnowledgeBase[]
+  }
+
   static async findById(id: number): Promise<KnowledgeBase | null> {
     const [rows] = await pool.execute(
       'SELECT * FROM knowledge_bases WHERE id = ?',

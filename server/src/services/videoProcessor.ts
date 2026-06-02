@@ -38,13 +38,9 @@ async function getTranscriber() {
   }
   _transcriberLoading = true
   try {
-    console.log('[Whisper] 加载 whisper-small 模型（首次约需下载500MB，中文识别更好）...')
     const { pipeline, env } = await import('@xenova/transformers')
-    // 设置国内 HF 镜像，解决 fetch failed 问题
     env.remoteHost = 'https://hf-mirror.com/'
-    console.log('[Whisper] 下载源:', env.remoteHost)
     _transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small')
-    console.log('[Whisper] 模型加载完成')
     return _transcriber
   } catch (e: any) {
     _transcriberLoadError = e.message || '模型加载失败'
