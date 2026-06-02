@@ -27,7 +27,7 @@
         />
       </div>
 
-      <div class="resize-handle" @mousedown="onResizeStart" />
+      <div class="resize-handle resize-left" @mousedown="onResizeLeftStart" />
 
       <!-- Center: chat + exec output -->
       <div class="panel panel-center">
@@ -55,6 +55,8 @@
           </Transition>
         </div>
       </div>
+
+      <div v-if="selectedFile" class="resize-handle resize-right" @mousedown="onResizeRightStart" />
 
       <!-- Right: file preview -->
       <Transition name="preview-slide">
@@ -168,14 +170,21 @@ async function rerunExec() {
   }
 }
 
-// Resize handle
-let resizing = false
-function onResizeStart() { resizing = true }
+// Resize handles
+let resizingLeft = false
+let resizingRight = false
+function onResizeLeftStart() { resizingLeft = true }
+function onResizeRightStart() { resizingRight = true }
 document.addEventListener('mousemove', (e) => {
-  if (!resizing) return
-  leftWidth.value = Math.max(180, Math.min(500, e.clientX))
+  if (resizingLeft) {
+    leftWidth.value = Math.max(180, Math.min(500, e.clientX))
+  }
+  if (resizingRight) {
+    const rightEdge = window.innerWidth
+    rightWidth.value = Math.max(280, Math.min(800, rightEdge - e.clientX - 8))
+  }
 })
-document.addEventListener('mouseup', () => { resizing = false })
+document.addEventListener('mouseup', () => { resizingLeft = false; resizingRight = false })
 </script>
 
 <style scoped>
