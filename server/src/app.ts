@@ -125,19 +125,10 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 })
 
 // 后台预加载语音识别模型（避免首次请求阻塞/OOM崩溃）
-import('./services/videoProcessor.js').then(m => {
-  m.preloadTranscriber()
-}).catch(() => {})
-
-// 后台预加载本地 embedding 模型
-import('./services/embedding.js').then(m => {
-  m.preloadEmbeddingModel()
-}).catch(() => {})
-
-// 后台预加载本地 Reranker 模型
-import('./services/reranker.js').then(m => {
-  m.preloadReranker()
-}).catch(() => {})
+// 本地模型按需加载，不在启动时预加载（节省内存，线上建议 forceAPI=true）
+// import('./services/videoProcessor.js').then(m => { m.preloadTranscriber() }).catch(() => {})
+// import('./services/embedding.js').then(m => { m.preloadEmbeddingModel() }).catch(() => {})
+// import('./services/reranker.js').then(m => { m.preloadReranker() }).catch(() => {})
 
 // 确保聊天反馈表存在
 import('./models/chatFeedback.js').catch(() => {})
