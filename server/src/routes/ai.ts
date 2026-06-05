@@ -106,7 +106,10 @@ router.post('/chat', async (req, res) => {
               break
             case 'tool_call':
               toolLog.push(`🔧 ${event.tool}`)
-              res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: event.tool, args: event.args })}\n\n`)
+              // 仅桌面端发送工具调用事件，web 端静默处理
+              if (toolMode === 'desktop') {
+                res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: event.tool, args: event.args })}\n\n`)
+              }
               break
             case 'tool_result': {
               const result = (event as any).result || ''
@@ -122,7 +125,10 @@ router.post('/chat', async (req, res) => {
                 summary = result.slice(0, 100).replace(/\n/g, ' ')
               }
               toolLog.push(`  → ${summary}${result.length > 100 ? '...' : ''}`)
-              res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: event.tool, result, ...(event.imageUrl ? { imageUrl: event.imageUrl } : {}) })}\n\n`)
+              // 仅桌面端发送工具结果事件
+              if (toolMode === 'desktop') {
+                res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: event.tool, result, ...(event.imageUrl ? { imageUrl: event.imageUrl } : {}) })}\n\n`)
+              }
               break
             }
             case 'done':
