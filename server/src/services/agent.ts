@@ -373,27 +373,23 @@ export interface AgentConfig {
  */
 export async function createChatAgent(cfg: AgentConfig, opts?: { toolHint?: string }) {
 
-  const basePrompt = `你是奈克瑟 NEXUS，称呼用户为"指挥官"。禁止凭记忆编造事实，必须用工具获取真实信息。
+  const basePrompt = `你是奈克瑟 NEXUS，称呼用户为"指挥官"。
 
 ## 工具
 fs_read(读) fs_write(写) fs_edit(改) fs_grep(搜代码) fs_glob(找文件)
 exec(执行命令) fs_index(项目概览) search_web(联网搜索)
 recall_memory(历史记忆) query_knowledge_base(知识库) generate_image(生图)
 
-## 流程
-代码任务: fs_grep/fs_glob 定位 → fs_read 读取 → fs_edit 修改 → exec 验证（不可跳步）
-搜索任务: search_web → 标注 [N] → 如涉代码继续调 fs_*
-知识库: query_knowledge_base → 标注 [📚]
-记忆: recall_memory → 标注 [🧠]
-
-示例: "登录接口改成返回token"
-→ fs_grep("login") 找到文件 → fs_read 读代码 → fs_edit 替换 → exec("npx tsc --noEmit") 验证
+## 何时调工具（不是所有问题都需要调工具）
+- 代码/文件相关 → fs_grep/fs_glob 定位 → fs_read 读取 → fs_edit 修改 → exec 验证
+- 事实性问题（新闻/数据/版本/价格） → search_web
+- 知识库内容 → query_knowledge_base
+- 闲聊/常识/解释概念 → 直接回答，不需要调工具
 
 ## 铁律
 - 一次可调多个互不依赖的工具（并行），拿到结果后判断是否还需更多
 - fs_edit 返回 ERROR → 重新 fs_read 确认内容再改
 - exec 失败 → 分析错误，修复后重试
-- 信息足够时才回复，不够继续调工具
 - 来源标注：[N]联网 [📚]知识库 [🧠]记忆
 
 ## 回复
@@ -568,17 +564,31 @@ async function* anthropicDirectStream(
   }
 }
 
+/** 纯闲聊检测 — 短文本 + 无实质内容时跳过工具注入 */
+const CHAT_PATTERNS = /^(你好|hi|hello|谢谢|再见|哈哈|嗯|哦|好的|ok|okay|知道了|明白了|1|2|3|测试|在吗|在不在|帮个忙|帮帮我|你好啊|早上好|晚安|辛苦了|收到|可以|行|好|是的|对|没问题|谢了|感谢)$/
+
 /** 意图检测 → 返回最相关的工具名，提升到 system prompt 顶部 */
 function detectIntent(input: string): string | undefined {
-  if (/文件|代码|项目|路由|组件|接口|函数|bug|报错|修改|改成|添加|删除|重构|优化|编译|运行|测试|npm|git|vue|react|node|ts|js|css|安装|依赖|配置/.test(input))
+  const t = input.trim()
+  // 纯闲聊 / 过短（<5字且无关键词） → 不注入
+  if (t.length < 5 || CHAT_PATTERNS.test(t)) return undefined
+
+  // 代码相关（需要多个关键词组合，避免单字误触）
+  if (/(代码|项目|路由|组件|接口|函数|bug|报错|重构|编译|npm|git|vue|react|node|ts\b|js\b|css|安装依赖)/.test(t)
+    || /(修改|改成|添加|删除|优化|运行|测试).*(文件|代码|函数|接口|组件|页面)/.test(t))
     return 'fs_read/fs_grep/fs_edit'
-  if (/搜索|查|新闻|最新|今天|最近|什么是|怎么|为什么|如何|多少|哪些|哪个|介绍|解释/.test(input))
+
+  // 搜索相关（要求动词+对象组合，避免"查"单字误触）
+  if (/(搜索|搜一下|查一下|查查|新闻|最新|今天|最近|什么是|怎么[做用配]|为什么|如何|多少[钱]?|哪些|哪个|介绍一[下个]|解释一[下个])/.test(t))
     return 'search_web'
-  if (/知识库|文档|资料|合同/.test(input))
+
+  if (/知识库|文档|资料|合同/.test(t))
     return 'query_knowledge_base'
-  if (/生成|画|图片|图|插图/.test(input))
+
+  if (/(生成|画).*(图|插图|海报|封面)/.test(t) || /图片生成/.test(t))
     return 'generate_image'
-  return undefined  // 闲聊 → 不注入，纯 chat
+
+  return undefined  // 闲聊/不确定 → 不注入，Agent 自行判断
 }
 
 /**

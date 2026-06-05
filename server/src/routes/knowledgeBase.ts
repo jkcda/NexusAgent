@@ -321,6 +321,76 @@ router.get('/:kbId/documents/:docId/download', async (req: Request, res: Respons
   }
 })
 
+// 调试：查看知识库分块数据
+router.get('/:kbId/chunks', async (req: Request, res: Response) => {
+  try {
+    const kbId = Number(req.params.kbId)
+    const docId = req.query.docId ? Number(req.query.docId) : undefined
+    const limit = Math.min(Number(req.query.limit) || 50, 200)
+    const offset = Number(req.query.offset) || 0
+
+    const kb = await kbService.getKnowledgeBase(kbId)
+    if (!kb) return ApiResponse.notFound(res, '知识库不存在')
+    if (kb.user_id !== req.user!.id) return ApiResponse.forbidden(res, '无权访问此知识库')
+
+    const { getLanceConnection } = await import('../services/vectorStore.js')
+    const conn = await getLanceConnection()
+    const tableName = `kb_${kbId}`
+    const tableNames = await conn.tableNames()
+
+    if (!tableNames.includes(tableName)) {
+      return ApiResponse.success(res, { chunks: [], total: 0, tableName }, '该知识库暂无向量数据')
+    }
+
+    const table = await conn.openTable(tableName)
+    let query = table.query()
+    if (docId !== undefined) {
+      query = query.where(`doc_id = ${docId}`)
+    }
+    const allRows = await query.toArray()
+    const total = allRows.length
+
+    // 分页 + 去掉 vector 字段（太大）
+    const rows = allRows.slice(offset, offset + limit).map((row: any) => {
+      const { vector, ...rest } = row
+      return {
+        ...rest,
+        text_preview: (row.text || '').slice(0, 300),
+        text_length: (row.text || '').length,
+        vector_dimension: Array.isArray(vector) ? vector.length : 0,
+      }
+    })
+
+    return ApiResponse.success(res, { chunks: rows, total, tableName, offset, limit }, '分块数据')
+  } catch (err: any) {
+    return ApiResponse.internalServerError(res, '查询分块失败', err.message)
+  }
+})
+
+// 调试：查看所有向量表
+router.get('/debug/tables', async (_req: Request, res: Response) => {
+  try {
+    const { getLanceConnection } = await import('../services/vectorStore.js')
+    const conn = await getLanceConnection()
+    const tableNames = await conn.tableNames()
+
+    const tables = []
+    for (const name of tableNames) {
+      try {
+        const table = await conn.openTable(name)
+        const count = (await table.query().toArray()).length
+        tables.push({ name, count })
+      } catch {
+        tables.push({ name, count: -1 })
+      }
+    }
+
+    return ApiResponse.success(res, { tables }, '向量表列表')
+  } catch (err: any) {
+    return ApiResponse.internalServerError(res, '查询失败', err.message)
+  }
+})
+
 // 多知识库联合检索
 router.post('/search', async (req: Request, res: Response) => {
   try {
