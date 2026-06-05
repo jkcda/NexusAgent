@@ -2,12 +2,98 @@ import { BrowserWindow, app, dialog, ipcMain, shell } from "electron";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { createHash } from "crypto";
+import { spawn } from "child_process";
 import os from "os";
+import fs from "fs";
 //#region electron/main.ts
 var __dirname = dirname(fileURLToPath(import.meta.url));
 var MACHINE_ID = createHash("sha256").update(`${os.hostname()}-${os.userInfo().username}-${os.platform()}`).digest("hex").slice(0, 16);
 var mainWindow = null;
+var serverProcess = null;
 var SERVER_URL = `http://127.0.0.1:3000`;
+function findServerDir() {
+	const extra = join(process.resourcesPath, "server");
+	if (fs.existsSync(join(extra, "dist", "app.js"))) return extra;
+	const dev = join(__dirname, "..", "..", "..", "server");
+	if (fs.existsSync(join(dev, "src", "app.ts"))) return dev;
+	return null;
+}
+async function ensureDeps(srvDir) {
+	const nodeModules = join(srvDir, "node_modules");
+	if (fs.existsSync(nodeModules)) return true;
+	try {
+		await spawnAndWait("npm", ["install", "--legacy-peer-deps"], srvDir, "[npm]");
+		console.log("[Electron] 依赖安装完成");
+		return true;
+	} catch {
+		console.error("[Electron] 依赖安装失败，请确保已安装 Node.js");
+		return false;
+	}
+}
+function spawnAndWait(cmd, args, cwd, tag) {
+	return new Promise((resolve, reject) => {
+		const proc = spawn(cmd, args, {
+			cwd,
+			shell: true,
+			stdio: [
+				"ignore",
+				"pipe",
+				"pipe"
+			]
+		});
+		proc.stderr?.on("data", (d) => console.log(`${tag} ${d.toString().trim()}`));
+		proc.stdout?.on("data", (d) => console.log(`${tag} ${d.toString().trim()}`));
+		proc.on("close", (code) => code === 0 ? resolve() : reject(/* @__PURE__ */ new Error(`exit ${code}`)));
+		proc.on("error", reject);
+	});
+}
+function startServer() {
+	return new Promise(async (resolve) => {
+		const srvDir = findServerDir();
+		if (!srvDir) {
+			console.warn("[Electron] 未找到后端目录");
+			resolve(false);
+			return;
+		}
+		const isDev = fs.existsSync(join(srvDir, "src", "app.ts"));
+		if (!isDev && !fs.existsSync(join(srvDir, "node_modules"))) {
+			console.log("[Electron] 首次启动，安装后端依赖...");
+			if (!await ensureDeps(srvDir)) {
+				resolve(false);
+				return;
+			}
+		}
+		serverProcess = spawn(isDev ? "npx" : "node", isDev ? ["tsx", "src/app.ts"] : ["dist/app.js"], {
+			cwd: srvDir,
+			shell: true,
+			env: { ...process.env },
+			stdio: [
+				"ignore",
+				"pipe",
+				"pipe"
+			]
+		});
+		serverProcess.stdout?.on("data", (d) => {
+			const msg = d.toString().trim();
+			if (msg) console.log(`[server] ${msg}`);
+		});
+		serverProcess.stderr?.on("data", (d) => {
+			const msg = d.toString().trim();
+			if (msg && !msg.includes("CleanUnusedInitializers")) console.log(`[server] ${msg}`);
+		});
+		serverProcess.on("exit", (code) => {
+			console.log(`[Electron] 后端进程退出: ${code}`);
+			serverProcess = null;
+		});
+		waitForServer(30, 1e3).then(resolve);
+	});
+}
+function stopServer() {
+	if (serverProcess) {
+		serverProcess.kill();
+		serverProcess = null;
+	}
+}
 async function waitForServer(retries = 30, interval = 1e3) {
 	for (let i = 0; i < retries; i++) {
 		try {
@@ -92,15 +178,13 @@ ipcMain.handle("app:connect", async () => {
 		username: "desktop"
 	};
 });
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
 	createWindow();
-	waitForServer(10, 1500).then((online) => {
-		console.log(online ? "[Electron] Server detected" : "[Electron] Server not detected — start with: cd server && npx tsx src/app.ts");
-	});
+	if (await startServer()) console.log("[Electron] 后端已启动");
+	else console.log("[Electron] 后端启动失败 — 请运行 cd server && npx tsx src/app.ts");
 });
-app.on("window-all-closed", () => {
-	app.quit();
-});
+app.on("before-quit", () => stopServer());
+app.on("window-all-closed", () => app.quit());
 app.on("activate", () => {
 	if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

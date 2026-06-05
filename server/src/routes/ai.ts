@@ -28,7 +28,8 @@ router.get('/guest-status', (req, res) => {
 // POST /api/ai/chat - AI对话（统一入口：Agent 工具调用 + 多模态流式）
 router.post('/chat', async (req, res) => {
   try {
-    const { message, sessionId, userId, files, kbId, kbIds, maxVideoFrames, model, agentId, initImage, forceKbRetrieval, webSearchEnabled } = req.body
+    const { message, sessionId, userId, files, kbId, kbIds, maxVideoFrames, model, agentId, initImage, forceKbRetrieval, webSearchEnabled, projectPath } = req.body
+    const toolMode: 'desktop' | 'full' = projectPath ? 'desktop' : 'full'
 
     if (!message && (!files || files.length === 0)) {
       return ApiResponse.badRequest(res, '请输入消息内容或上传文件')
@@ -82,7 +83,8 @@ router.post('/chat', async (req, res) => {
         userRole,
         agentId || undefined,
         initImage || undefined,
-        forceKbRetrieval !== false  // 默认启用
+        forceKbRetrieval === true || !!(kbId || kbIds),  // 仅当用户显式启用或选了知识库时检索
+        toolMode
       )
 
       let assistantContent = ''
@@ -108,9 +110,18 @@ router.post('/chat', async (req, res) => {
               break
             case 'tool_result': {
               const result = (event as any).result || ''
-              // 提取关键信息作为摘要（取第一行或截断）
-              const summary = result.slice(0, 120).replace(/\n/g, ' ')
-              toolLog.push(`  → ${summary}${result.length > 120 ? '...' : ''}`)
+              // 智能摘要：解析常见工具结果格式
+              let summary = ''
+              try {
+                const j = JSON.parse(result)
+                if (j.path) summary = `${j.path}${j.totalLines ? ` (${j.totalLines}行)` : ''}${j.type === 'directory' ? ` [${j.count}项]` : ''}`
+                else if (j.files) summary = `${j.files.length}个文件`
+                else if (j.text) summary = j.text.slice(0, 100)
+                else summary = result.slice(0, 100)
+              } catch {
+                summary = result.slice(0, 100).replace(/\n/g, ' ')
+              }
+              toolLog.push(`  → ${summary}${result.length > 100 ? '...' : ''}`)
               res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: event.tool, result, ...(event.imageUrl ? { imageUrl: event.imageUrl } : {}) })}\n\n`)
               break
             }

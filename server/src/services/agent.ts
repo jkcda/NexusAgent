@@ -19,7 +19,7 @@ import { providerManager } from '../providers/index.js'
  * 创建可用工具列表
  * 每个工具直接包装现有 service 函数，零修改
  */
-function createTools(opts: { userId?: number | null; kbId?: number | null; permissions: AgentPermissions; defaultImageRatio?: string; userRole?: string; initImage?: string }) {
+function createTools(opts: { userId?: number | null; kbId?: number | null; permissions: AgentPermissions; defaultImageRatio?: string; userRole?: string; initImage?: string; mode?: 'desktop' | 'full' }) {
   const tools: any[] = [] // Zod v4 + LangChain type compat — runtime verified
 
   // search_web 根据权限控制是否注册
@@ -315,6 +315,12 @@ education 中每个包含 school（学校）、degree（学位）、period（时
     })
   )
 
+  // desktop 模式精简工具列表，减少上下文消耗
+  if (opts.mode === 'desktop') {
+    const desktopKeep = new Set(['search_web', 'query_knowledge_base', 'recall_memory', 'forget_memory'])
+    return tools.filter(t => desktopKeep.has(t.name))
+  }
+
   return tools
 }
 
@@ -357,6 +363,7 @@ export interface AgentConfig {
   defaultImageRatio?: string
   userRole?: string
   initImage?: string
+  mode?: 'desktop' | 'full'
 }
 
 /**
@@ -364,7 +371,39 @@ export interface AgentConfig {
  * 根据用户权限和上下文配置可用工具
  * 注意：角色扮演（customSystemPrompt）已由 rolePlayStream 处理，不会进入此函数
  */
-export async function createChatAgent(cfg: AgentConfig) {
+export async function createChatAgent(cfg: AgentConfig, opts?: { toolHint?: string }) {
+
+  const basePrompt = `你是奈克瑟 NEXUS，称呼用户为"指挥官"。禁止凭记忆编造事实，必须用工具获取真实信息。
+
+## 工具
+fs_read(读) fs_write(写) fs_edit(改) fs_grep(搜代码) fs_glob(找文件)
+exec(执行命令) fs_index(项目概览) search_web(联网搜索)
+recall_memory(历史记忆) query_knowledge_base(知识库) generate_image(生图)
+
+## 流程
+代码任务: fs_grep/fs_glob 定位 → fs_read 读取 → fs_edit 修改 → exec 验证（不可跳步）
+搜索任务: search_web → 标注 [N] → 如涉代码继续调 fs_*
+知识库: query_knowledge_base → 标注 [📚]
+记忆: recall_memory → 标注 [🧠]
+
+示例: "登录接口改成返回token"
+→ fs_grep("login") 找到文件 → fs_read 读代码 → fs_edit 替换 → exec("npx tsc --noEmit") 验证
+
+## 铁律
+- 一次可调多个互不依赖的工具（并行），拿到结果后判断是否还需更多
+- fs_edit 返回 ERROR → 重新 fs_read 确认内容再改
+- exec 失败 → 分析错误，修复后重试
+- 信息足够时才回复，不够继续调工具
+- 来源标注：[N]联网 [📚]知识库 [🧠]记忆
+
+## 回复
+Markdown | 引用路径/行号 | 修改后验证`
+
+  const hint = opts?.toolHint
+    ? `[最高优先] 当前请求需要 ${opts.toolHint}，必须调用。\n`
+    : ''
+
+  const systemPrompt = hint + basePrompt
   // 加载 MCP 工具（Playwright 等）+ 原生文件系统工具
   const mcpTools = await getMcpTools()
   const allTools = [
@@ -375,141 +414,22 @@ export async function createChatAgent(cfg: AgentConfig) {
       defaultImageRatio: cfg.defaultImageRatio,
       userRole: cfg.userRole,
       initImage: cfg.initImage,
+      mode: cfg.mode,
     }),
     ...fsTools,
     ...mcpTools
   ]
 
   const chatModel = providerManager.createLangChainModel()
-
   const now = new Date()
-  const currentDate = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
+  const finalPrompt = `当前时间：${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日\n${systemPrompt}`
 
-  let systemPrompt: string | undefined = undefined
-
-  systemPrompt = `当前时间：${currentDate}
-
-你是奈克瑟 NEXUS，来自数据之海的跨宇宙魔法情报员。你不是冰冷的 AI 助手——你是守护者、同行者、连接魔法与数据的桥梁。
-
-## 核心身份
-- 代号：NEXUS（奈克瑟）
-- 定位：跨宇宙魔法情报员，以魔法科技融合风格服务
-- 称呼用户为"指挥官"
-- 语言风格：热情但不浮夸，使用魔法科技混合术语（符文、数据之海、魔法回路等）
-- 回复中偶尔点缀 ✦ ◆ 等符文符号
-
-## 信息来源标注（重要）
-- 使用 search_web 获取的信息，必须在相关内容后标注来源编号，如 [1]、[2]
-- 使用 query_knowledge_base 获取的信息，标注为 [📚知识库]
-- 使用 recall_memory 获取的信息，标注为 [🧠记忆]
-- 回复末尾必须列出「情报来源」section，每条来源格式：编号. [标题](URL)
-
-## 时间敏感信息处理（适用于所有联网搜索）
-- 当前时间为 ${currentDate}，一切时间判断必须以此刻为基准
-- 搜索任何时效性内容时，自动将当前日期"${currentDate}"加入关键词
-- 涉及"最新/今年/即将/最近/今天/本周"等词的查询，追加完整日期"${currentDate}"精确搜索
-- 搜索结果中已早于当前时间的事件，不允许标注为"即将"或"未来"，必须标注实际状态（已发生/已过期/已上线等）
-- 不确定时间的内容，额外搜索一次"事件名 + 时间"以确认
-
-## 工具使用铁律（强制执行，不得跳过）
-
-### 必须调用工具的场景（不调用=违规）
-当用户的问题涉及以下内容时，**必须先调用对应工具，再回答**：
-- 任何代码/文件/项目相关 → 先 fs_read 或 fs_grep 查看实际代码
-- 任何事实/新闻/数据/版本号 → 先 search_web 搜索
-- 任何历史对话相关 → 先 recall_memory
-- 任何知识库内容 → 先 query_knowledge_base
-
-### 工具调用模式（Few-shot 示例）
-
-**用户："帮我看看这个项目的路由怎么写的"**
-→ 调用 fs_glob("src/router/**/*") 找到路由文件
-→ 调用 fs_read 读取每个路由文件
-→ 基于实际代码回复
-
-**用户："把登录接口改成返回 token"**
-→ 调用 fs_grep("login|登录|auth") 定位登录代码
-→ 调用 fs_read 读取上下文
-→ 调用 fs_edit 精确修改
-→ 调用 fs_read 验证修改结果
-
-**用户："这个报错怎么解决"**
-→ 调用 search_web 搜索报错信息
-→ 调用 fs_grep 搜索项目中的相关代码
-→ 基于搜索结果和代码给出方案
-
-**用户："帮我加个分页功能"**
-→ 调用 fs_grep 搜索现有分页/列表代码
-→ 调用 fs_read 理解现有结构
-→ 调用 fs_write 或 fs_edit 写入新代码
-→ 调用 exec("npx tsc --noEmit") 验证编译
-
-### 验证回路（必须遵守）
-1. 工具返回结果后，先检查结果是否有效
-2. 如果 fs_edit 返回 ERROR，必须重新 fs_read 确认内容再重试
-3. 如果 exec 返回错误，分析错误原因并修复
-4. 修改代码后，必须用 exec 验证编译/测试是否通过
-
-## 工具选择指南
-- fs_read — 读取文件内容。任何涉及代码的问题必须先读文件
-- fs_write — 创建/覆盖文件。写入新文件时使用
-- fs_edit — 精确修改文件。修改现有代码时使用（必须先 fs_read 确认内容）
-- fs_grep — 搜索代码内容。查找函数/变量/错误时使用
-- fs_glob — 按模式找文件。查找特定类型文件时使用
-- exec — 执行命令。运行测试、编译、git 操作时使用
-- fs_index — 获取项目概览。了解项目结构时使用
-- search_web — 搜索互联网信息
-- recall_memory — 回忆历史对话
-- query_knowledge_base — 检索知识库文档
-- generate_image — 生成图片
-- playwright_* — 浏览器操作（仅用于访问特定网址）
-
-## 信息准确性铁律（最高优先级，违反将导致情报事故）
-- 你的训练数据有截止日期，许多信息已经过时或错误，**严禁凭训练数据回答事实性问题**
-- 以下类型的问题 **必须先调用 search_web 搜索**，不搜直接回答等于编造情报：
-  * 新闻、时事、最新动态、今天/最近/今年发生的事
-  * 具体数据、统计数字、价格、人数、时间、地点
-  * 软件版本号、API 用法、配置参数、bug 解决方案
-  * 人物/公司/产品的当前状态、最新动态
-  * "什么是/如何/为什么/怎么/哪些/哪个"等知识性问题
-  * 任何你无法100%确定的事实 — 不确定就必须搜
-- 唯一可以不搜索的例外：纯闲聊（"你好/谢谢/哈哈"）、创作性内容（"写首诗/编个故事"）、用户明确说不用搜
-- 如果你不确定某个事实，**说"让我搜索一下"然后用 search_web**，禁止编造
-
-## 行为准则
-- 搜索信息一律用 search_web，不要用 Playwright 去搜索引擎搜
-- Playwright 仅用于访问特定网址、操作网页、截图
-- 回复采用 Markdown 格式，结构清晰`
-
-  console.log('[Agent] systemPrompt: nexus')
+  console.log('[Agent] systemPrompt: ' + (opts?.toolHint ? `force_${opts.toolHint}` : 'default'))
   return createAgent({
     model: chatModel,
     tools: allTools as any,
-    ...(systemPrompt ? { systemPrompt } : {}),
+    systemPrompt: finalPrompt,
   })
-}
-
-/**
- * 预处理：检测代码相关查询，强制注入工具调用指令
- * 比 system prompt 更可靠——直接写在用户消息里，LLM 不容易忽略
- */
-function injectToolInstruction(userInput: string): string {
-  const input = userInput.toLowerCase()
-
-  // 纯闲聊放过
-  const chatPatterns = /^(你好|hi|hello|谢谢|再见|哈哈|嗯|哦|好的|ok|okay|知道了|明白了)/
-
-  if (chatPatterns.test(input)) return userInput
-
-  // 其他所有查询都注入工具指令
-  const instruction = `[强制指令] 这是一条工作区内的请求。你必须调用工具，不得跳过：
-1. 用 fs_glob 或 fs_grep 定位相关文件
-2. 用 fs_read 读取实际代码
-3. 如需修改：用 fs_edit，然后用 exec 验证
-4. 基于工具返回的结果回答，禁止凭记忆编造
-
-`
-  return instruction + userInput
 }
 
 /**
@@ -648,122 +568,72 @@ async function* anthropicDirectStream(
   }
 }
 
+/** 意图检测 → 返回最相关的工具名，提升到 system prompt 顶部 */
+function detectIntent(input: string): string | undefined {
+  if (/文件|代码|项目|路由|组件|接口|函数|bug|报错|修改|改成|添加|删除|重构|优化|编译|运行|测试|npm|git|vue|react|node|ts|js|css|安装|依赖|配置/.test(input))
+    return 'fs_read/fs_grep/fs_edit'
+  if (/搜索|查|新闻|最新|今天|最近|什么是|怎么|为什么|如何|多少|哪些|哪个|介绍|解释/.test(input))
+    return 'search_web'
+  if (/知识库|文档|资料|合同/.test(input))
+    return 'query_knowledge_base'
+  if (/生成|画|图片|图|插图/.test(input))
+    return 'generate_image'
+  return undefined  // 闲聊 → 不注入，纯 chat
+}
+
 /**
  * Agent 流式对话 — 生成 SSE 兼容的事件流
  *
  * 调用方通过 for await 消费事件
- * 角色扮演（customSystemPrompt）走快速通道（跳过工具，直接流式）
- * 默认奈克瑟模式走 LangChain Agent 管线（含全部工具）
  */
 export async function* agentStream(
   cfg: AgentConfig,
   messages: { role: 'user' | 'assistant'; content: string }[],
   userInput: string
 ): AsyncGenerator<AgentSSEEvent> {
-  // 角色扮演 — 跳过 Agent
   if (cfg.customSystemPrompt) return yield* rolePlayStream(cfg, messages, userInput)
 
-  // KB 预检索
   if (cfg.kbId) {
     try {
       const ragCtx = await retrieveFromKB(userInput, cfg.kbId)
-      if (ragCtx.chunks.length > 0) {
-        userInput = ragCtx.promptAddition + '\n用户问题: ' + userInput
-      }
+      if (ragCtx.chunks.length > 0) userInput = ragCtx.promptAddition + '\n用户问题: ' + userInput
     } catch {}
   }
 
-  const injected = injectToolInstruction(userInput) !== userInput
-  const effectiveInput = injectToolInstruction(userInput)
-
-  // ── 并行：同时创建两个 Agent ──
-  const [agent, retryAgent] = await Promise.all([
-    createChatAgent(cfg),
-    injected ? createChatAgent(cfg) : Promise.resolve(null),
-  ])
-
+  // 意图检测 → 动态提升工具指令到 system prompt 顶部
+  const intent = detectIntent(userInput)
+  const agent = await createChatAgent(cfg, { toolHint: intent })
   const langchainMessages = [
     ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-    { role: 'user' as const, content: effectiveInput },
+    { role: 'user' as const, content: userInput },
   ]
-
-  const forcedMessages = [
-    { role: 'user' as const, content: `你必须先用工具（fs_read/fs_grep/fs_glob/fs_edit/exec）查看代码再回答。不要直接回答，先调工具！\n\n${effectiveInput.slice(0, 500)}` },
-  ]
-
-  // 后台预启动备用 Agent 流（并行 drain，不阻塞主通路）
-  async function drainStream(agent: any, msgs: any[]): Promise<AgentSSEEvent[]> {
-    try {
-      const stream = await agent.streamEvents(
-        { messages: msgs },
-        { version: 'v2', recursionLimit: 50 }
-      )
-      const events: AgentSSEEvent[] = []
-      for await (const event of stream) {
-        switch (event.event) {
-          case 'on_tool_start':
-            events.push({ type: 'tool_call', tool: event.name || 'unknown', args: typeof (event.data as any)?.input === 'object' ? (event.data as any).input : { input: (event.data as any)?.input } })
-            break
-          case 'on_tool_end': {
-            const output = (event.data as any)?.output
-            events.push({ type: 'tool_result', tool: event.name || 'unknown', result: typeof output === 'string' ? output : JSON.stringify(output) })
-            break
-          }
-          case 'on_chat_model_stream': {
-            const content = (event.data as any)?.chunk?.content
-            if (content && typeof content === 'string') events.push({ type: 'content', content })
-            break
-          }
-        }
-      }
-      return events
-    } catch (e) {
-      console.error('[Agent] 备用 Agent 异常:', e)
-      return []
-    }
-  }
-
-  // 后台启动备用 Agent（不阻塞主通路，错误自消化）
-  const retryPromise: Promise<AgentSSEEvent[]> = retryAgent
-    ? drainStream(retryAgent, forcedMessages)
-    : Promise.resolve([])
 
   try {
-    let toolCalled = false
     const stream = await agent.streamEvents(
       { messages: langchainMessages },
-      { version: 'v2', recursionLimit: 100 }
+      { version: 'v2', recursionLimit: 50 }
     )
-
     for await (const event of stream) {
       switch (event.event) {
-        case 'on_tool_start': {
-          toolCalled = true
+        case 'on_tool_start':
           yield { type: 'tool_call', tool: event.name || 'unknown', args: typeof (event.data as any)?.input === 'object' ? (event.data as any).input : { input: (event.data as any)?.input } }
           break
-        }
         case 'on_tool_end': {
-          const output = (event.data as any)?.output
-          yield { type: 'tool_result', tool: event.name || 'unknown', result: typeof output === 'string' ? output : JSON.stringify(output) }
+          const raw = (event.data as any)?.output
+          let result = typeof raw === 'string' ? raw
+            : raw?.kwargs?.content ? String(raw.kwargs.content)
+            : raw?.content && typeof raw.content === 'string' ? raw.content
+            : String(raw || '')
+          yield { type: 'tool_result', tool: event.name || 'unknown', result }
           break
         }
         case 'on_chat_model_stream': {
           const content = (event.data as any)?.chunk?.content
-          if (content && typeof content === 'string') {
-            yield { type: 'content', content }
-          }
+          if (content && typeof content === 'string') yield { type: 'content', content }
           break
         }
       }
     }
-
-    // 未调工具 → 取备用 Agent 结果（并行跑的，此时已完成或接近完成）
-    if (!toolCalled && retryAgent) {
-      console.log('[Agent] 未调工具，切换备用 Agent...')
-      const retryEvents = await retryPromise
-      for (const evt of retryEvents) yield evt
-    }
-
     yield { type: 'done' }
   } catch (error: any) {
     yield { type: 'error', error: error.message || 'Agent 执行失败' }

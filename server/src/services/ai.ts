@@ -255,7 +255,8 @@ export async function chatWithAIStream(
   userRole?: string,
   agentId?: number | null,
   initImage?: string,
-  forceKbRetrieval: boolean = true
+  forceKbRetrieval: boolean = true,
+  mode?: 'desktop' | 'full'
 ) {
   try {
     const history = await ChatHistoryModel.getBySessionIdAndUserId(sessionId, userId)
@@ -429,7 +430,7 @@ export async function chatWithAIStream(
     // Agent 管线（纯文本 / 含文档）— 使用压缩后的历史
     const singleKbId = effectiveKbIds.length === 1 ? effectiveKbIds[0] : undefined
     const events = agentStream(
-      { userId, kbId: singleKbId, model, customSystemPrompt, userRole, initImage, permissions: { kbRetrieval: !!kbContext, memory: !!userId, imageGeneration: true, webSearch: webSearchEnabled } },
+      { userId, kbId: singleKbId, model, customSystemPrompt, userRole, initImage, mode, permissions: { kbRetrieval: !!kbContext, memory: !!userId, imageGeneration: true, webSearch: webSearchEnabled } },
       compressedHistory,
       agentMessage
     )

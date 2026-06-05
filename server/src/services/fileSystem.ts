@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execSync } from 'node:child_process'
 import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import config from '../config/index.js'
@@ -136,12 +136,13 @@ function setCached(absPath: string, mtime: number, content: string): void {
     return `已删除：${filePath}`
   }, {
     name: 'fs_delete',
-    description: '删除文件或目录（递归删除目录内所有内容）。不可恢复。',
+    description: '删除文件或空目录。不可恢复，请谨慎使用。',
     schema: z.object({
       filePath: z.string().describe('要删除的文件或目录路径'),
     }),
   }),
 
+  // fs_list — 目录遍历
   tool(async ({ filePath, recursive }: { filePath: string; recursive?: boolean }) => {
     const wsRoot = getWorkspaceRoot()
     const abs = resolveSafe(filePath)
@@ -307,40 +308,25 @@ function setCached(absPath: string, mtime: number, content: string): void {
     for (const p of blocked) {
       if (p.test(command)) return `命令被阻止（安全策略）: ${command}`
     }
-
-    return new Promise((resolve) => {
-      const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
-      const child = spawn(command, {
+    try {
+      const stdout = execSync(command, {
         cwd: wsRoot,
-        shell,
-        env: process.env,  // 不覆盖 HOME/USERPROFILE
-        timeout: 60000,    // 60s，npm install 等需要更长时间
+        timeout: 120000,
+        maxBuffer: 500 * 1024,
+        encoding: 'utf-8',
+        shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash',
+        env: process.env,
         windowsHide: true,
       })
-
-      let stdout = ''
-      let stderr = ''
-
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString() })
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString() })
-
-      child.on('close', (code) => {
-        const out = (stdout + (stderr ? '\n[stderr]\n' + stderr : '')).slice(0, 8000)
-        if (code === 0) {
-          resolve(out.trim() || '(命令执行完成，无输出)')
-        } else {
-          const msg = stderr || stdout || `退出码: ${code}`
-          resolve(`命令执行失败 (退出码 ${code}): ${msg}`.slice(0, 3000))
-        }
-      })
-
-      child.on('error', (err) => {
-        resolve(`命令启动失败: ${err.message}`.slice(0, 3000))
-      })
-    })
+      return stdout.slice(0, 8000) || '(命令执行完成，无输出)'
+    } catch (e: any) {
+      const msg = e.stderr || e.stdout || e.message || ''
+      if (e.message?.includes('ETIMEDOUT')) return '命令超时(120s)'
+      return `命令执行失败 (退出码 ${e.status || '?'}): ${msg}`.slice(0, 3000)
+    }
   }, {
     name: 'exec',
-    description: `在工作区目录执行命令并返回输出。支持编译、运行测试、安装依赖、git 操作等。命令在 ${process.platform === 'win32' ? 'PowerShell' : 'bash'} 中执行，超时 30 秒，输出截断至 8000 字符。危险命令(rm -rf /, dd, fork bomb等)会被拦截。`,
+    description: `在工作区目录执行命令并返回输出。支持编译、运行测试、安装依赖、git 操作等。命令在 ${process.platform === 'win32' ? 'PowerShell' : 'bash'} 中执行，超时 120 秒，输出截断至 8000 字符。危险命令(rm -rf /, dd, fork bomb等)会被拦截。`,
     schema: z.object({
       command: z.string().describe('要执行的 shell 命令，如 "npm test"、"npx tsx src/index.ts"、"git status"'),
     }),

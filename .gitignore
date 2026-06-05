@@ -51,3 +51,4 @@ server/.playwright-mcp/
 docs/
 NEXUS-核心架构解读-面试版.md
 client/frontend-dev-doc.md
+release/

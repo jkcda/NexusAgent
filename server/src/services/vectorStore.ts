@@ -27,7 +27,7 @@ async function ensureKBIndices(table: Table) {
     await table.createIndex('vector')
     console.log(`[VectorStore] IVF_PQ 向量索引已建立: ${table.name}`)
   } catch (e: any) {
-    if (!e.message?.includes('already exists')) {
+    if (!e.message?.includes('already exists') && !e.message?.includes('empty')) {
       console.warn(`[VectorStore] 向量索引建立跳过: ${e.message || e}`)
     }
   }
@@ -195,6 +195,10 @@ export async function deleteDocumentsByDocId(
   const tableNames = await conn.tableNames()
   if (!tableNames.includes(tableName)) return
 
-  const table = await conn.openTable(tableName)
-  await table.delete(`doc_id = ${docId}`)
+  try {
+    const table = await conn.openTable(tableName)
+    await table.delete(`doc_id = ${docId}`)
+  } catch (e: any) {
+    console.warn(`[VectorStore] 删除向量失败（旧表缺少 doc_id 列？）: ${tableName} docId=${docId} — 建议重建该知识库`)
+  }
 }

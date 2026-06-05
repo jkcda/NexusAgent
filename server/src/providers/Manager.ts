@@ -118,14 +118,14 @@ class ProviderManager {
   }
 
   /** 创建 LangChain 模型（基于 LLM 配置，自动选择 OpenAI 或 Anthropic 格式） */
-  createLangChainModel(): ChatOpenAI | ChatAnthropic {
+  createLangChainModel(opts?: { tool_choice?: string }): ChatOpenAI | ChatAnthropic {
     const cfg = this.getLLMConfig()
 
     if (cfg.format === 'anthropic') {
       return new ChatAnthropic({
         model: cfg.model,
         apiKey: cfg.apiKey,
-        anthropicApiUrl: cfg.baseURL,  // 根 URL，ChatAnthropic 内部自动加 /v1/messages
+        anthropicApiUrl: cfg.baseURL,
         maxTokens: config.ai.maxTokens,
         temperature: 0.7,
       })
@@ -137,7 +137,10 @@ class ProviderManager {
       configuration: { baseURL: cfg.baseURL + '/v1' },
       maxTokens: config.ai.maxTokens,
       temperature: 0.7,
-      modelKwargs: { tool_choice: 'auto' },
+      modelKwargs: {
+        tool_choice: opts?.tool_choice || 'auto',
+        parallel_tool_calls: true,  // 允许并行工具调用，减少串行延迟
+      },
     })
   }
 
@@ -231,30 +234,19 @@ class ProviderManager {
     }
   }
 
-  /**
-   * Anthropic 格式流式调用（直接用 SDK，不走 LangChain）
-   * 适用于 Anthropic 兼容格式的 LLM（如小米 MiMo）
-   */
+  /** Anthropic 流式（纯文本，无 tools） */
   async *chatStreamAnthropic(
     messages: Array<{ role: string; content: string }>,
     opts: { system?: string } = {}
   ): AsyncGenerator<string> {
-    const cfg = this.getLLMConfig()
-    const client = new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
-
-    const anthropicMessages = messages.map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }))
-
+    const client = new Anthropic({ apiKey: this.getLLMConfig().apiKey, baseURL: this.getLLMConfig().baseURL })
     const stream = await client.messages.stream({
-      model: cfg.model,
+      model: this.getLLMConfig().model,
       max_tokens: config.ai.maxTokens,
       temperature: 0.7,
       ...(opts.system ? { system: opts.system } : {}),
-      messages: anthropicMessages,
+      messages: messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content as string })),
     })
-
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {
         const text = (event.delta as any)?.text

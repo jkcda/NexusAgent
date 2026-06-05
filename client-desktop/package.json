@@ -5,12 +5,27 @@
   "main": "dist-electron/main.js",
   "private": true,
   "type": "module",
+  "build": {
+    "appId": "com.nexus.desktop",
+    "productName": "NEXUS Desktop",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*"],
+    "extraResources": [
+      { "from": "../server/dist", "to": "server/dist" },
+      { "from": "../server/package.json", "to": "server/package.json" },
+      { "from": "../server/database.sql", "to": "server/database.sql" }
+    ],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg" },
+    "linux": { "target": "AppImage" }
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "electron:dev": "vite",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "vite build && electron-builder",
+    "electron:pack": "cd ../server && npm run build && cd ../client-desktop && vite build && electron-builder"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
