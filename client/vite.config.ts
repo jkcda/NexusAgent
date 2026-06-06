@@ -11,7 +11,7 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 export default defineConfig({
   plugins: [
     vue(),
-    vueDevTools(),
+    // vueDevTools(),  // 关闭 devtools 提升首次加载速度
     AutoImport({
       resolvers: [ElementPlusResolver()],
     }),
