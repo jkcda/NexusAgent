@@ -1,19 +1,9 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { ElMessage } from 'element-plus'
+
+// Layout 是外壳组件，保持静态导入
 import Layout from '@/views/Layout/index.vue'
 import AuthLayout from '@/views/Auth/AuthLayout.vue'
-import Login from '@/views/Login/login.vue'
-import Register from '@/views/Register/Register.vue'
-import VerifyEmail from '@/views/Auth/VerifyEmail.vue'
-import Home from '@/views/Home/home.vue'
-import Chat from '@/views/Chat/index.vue'
-import KnowledgeBase from '@/views/KnowledgeBase/index.vue'
-import AgentManager from '@/views/Agent/AgentManager.vue'
-import AdminLayout from '@/views/Admin/AdminLayout.vue'
-import AdminDashboard from '@/views/Admin/AdminDashboard.vue'
-import AdminUsers from '@/views/Admin/AdminUsers.vue'
-import AdminApiKeys from '@/views/Admin/ApiKeys.vue'
-import AdminProviders from '@/views/Admin/Providers.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -25,22 +15,22 @@ const router = createRouter({
       children: [
         {
           path: '',
-          component: Home,
+          component: () => import('@/views/Home/home.vue'),
           meta: { title: '首页' }
         },
         {
           path: 'chat',
-          component: Chat,
+          component: () => import('@/views/Chat/index.vue'),
           meta: { title: 'AI对话' }
         },
         {
           path: 'knowledge-base',
-          component: KnowledgeBase,
+          component: () => import('@/views/KnowledgeBase/index.vue'),
           meta: { title: '知识库' }
         },
         {
           path: 'agents',
-          component: AgentManager,
+          component: () => import('@/views/Agent/AgentManager.vue'),
           meta: { title: '角色管理', requiresAuth: true }
         },
         {
@@ -58,27 +48,27 @@ const router = createRouter({
     // 后台路由
     {
       path: '/admin',
-      component: AdminLayout,
+      component: () => import('@/views/Admin/AdminLayout.vue'),
       redirect: '/admin/providers',
       children: [
         {
           path: 'dashboard',
-          component: AdminDashboard,
+          component: () => import('@/views/Admin/AdminDashboard.vue'),
           meta: { title: '对话统计', requiresAdmin: true }
         },
         {
           path: 'users',
-          component: AdminUsers,
+          component: () => import('@/views/Admin/AdminUsers.vue'),
           meta: { title: '用户管理', requiresAdmin: true }
         },
         {
           path: 'api-keys',
-          component: AdminApiKeys,
+          component: () => import('@/views/Admin/ApiKeys.vue'),
           meta: { title: 'API Key 管理', requiresAdmin: true }
         },
         {
           path: 'providers',
-          component: AdminProviders,
+          component: () => import('@/views/Admin/Providers.vue'),
           meta: { title: '模型供应商配置' }
         }
       ]
@@ -91,13 +81,13 @@ const router = createRouter({
         {
           path: 'login',
           name: 'Login',
-          component: Login,
+          component: () => import('@/views/Login/login.vue'),
           meta: { title: '登录' }
         },
         {
           path: 'register',
           name: 'Register',
-          component: Register,
+          component: () => import('@/views/Register/Register.vue'),
           meta: { title: '注册' }
         },
         {
@@ -108,7 +98,7 @@ const router = createRouter({
     },
     {
       path: '/verify',
-      component: VerifyEmail,
+      component: () => import('@/views/Auth/VerifyEmail.vue'),
       meta: { title: '邮箱验证' }
     },
     // 旧路由重定向
@@ -119,7 +109,7 @@ const router = createRouter({
 
 // 路由守卫
 // 作用：控制页面访问权限
-router.beforeEach((to, from, next) => {
+router.beforeEach((to, _from, next) => {
   const token = localStorage.getItem('token')
   const userInfoStr = localStorage.getItem('userInfo')
 
