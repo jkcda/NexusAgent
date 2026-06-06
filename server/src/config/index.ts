@@ -1,7 +1,11 @@
 import dotenv from 'dotenv'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import pool from '../utils/db.js'
 
-dotenv.config()
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// 从 dist/config 回退两级到 server 根目录
+dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const SETTING_KEYS = [
   // 能力配置（以能力为中心，JSON 格式含 apiKey）
