@@ -24,6 +24,18 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+          'vendor-element': ['element-plus', '@element-plus/icons-vue'],
+          'vendor-socket': ['socket.io-client'],
+          'vendor-utils': ['marked', 'dompurify', 'axios'],
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {
