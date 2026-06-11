@@ -3,8 +3,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import pool from '../utils/db.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-// 从 dist/config 回退两级到 server 根目录
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 dotenv.config({ path: path.resolve(__dirname, '../../.env') })
 
 const SETTING_KEYS = [
