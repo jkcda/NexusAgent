@@ -142,6 +142,7 @@ router.post('/:kbId/documents', upload.array('files', 10), async (req: Request, 
 
     return ApiResponse.created(res, { documents: results }, `成功上传 ${results.length} 个文档`)
   } catch (err: any) {
+    console.error('[上传文档失败]', err)
     return ApiResponse.internalServerError(res, '上传文档失败', err.message)
   }
 })
