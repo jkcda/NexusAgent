@@ -9,8 +9,21 @@ const require = createRequire(import.meta.url)
 const pdfParse: (buf: Buffer) => Promise<{ text: string }> = require('pdf-parse')
 
 // 解析文档为纯文本（从 ai.ts 提取）
+function resolveFilePath(filePath: string): string {
+  if (path.isAbsolute(filePath) && fs.existsSync(filePath)) {
+    return filePath
+  }
+  // 兼容 URL 路径（如 /uploads/xxx）或相对路径
+  const stripped = filePath.replace(/^\//, '')
+  const resolved = path.resolve(process.cwd(), stripped)
+  if (fs.existsSync(resolved)) return resolved
+  // 最后回退：尝试 server 根目录
+  const serverRoot = path.resolve(process.cwd(), '..')
+  return path.resolve(serverRoot, stripped)
+}
+
 export async function parseDocument(filePath: string, mimeType: string): Promise<string> {
-  const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
+  const absolutePath = resolveFilePath(filePath)
 
   switch (mimeType) {
     case 'text/plain':
@@ -47,7 +60,7 @@ export async function parseDocument(filePath: string, mimeType: string): Promise
 
 // HTML 富预览（DOCX → mammoth HTML，XLSX → HTML 表格，PPTX → 格式化 HTML）
 export async function parseDocumentPreview(filePath: string, mimeType: string): Promise<{ content: string; format: 'html' | 'text' }> {
-  const absolutePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath)
+  const absolutePath = resolveFilePath(filePath)
 
   switch (mimeType) {
     case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
